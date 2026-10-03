@@ -1,0 +1,45 @@
+{
+  "currency": "TWD",
+  "usage": "personal",
+  "market": "TWSE_TPEX",
+  "directions": ["long", "short"],
+  "target_management": {
+    "stage": "beginner",
+    "monthly_target_return": 0.02
+  },
+  "backtest": {
+    "initial_capital": 300000,
+    "allow_day_trading": false,
+    "broker_profile_id": "default"
+  },
+  "broker_profiles": [
+    {
+      "id": "default",
+      "name": "預設券商（2.8 折）",
+      "commission_base_rate": 0.001425,
+      "commission_discount_multiplier": 0.28
+    }
+  ],
+  "risk": {
+    "max_loss_ratio": 0.10,
+    "exit_policy": "first_triggered_strategy_stop_or_max_loss"
+  },
+  "stock_pool": {
+    "exclude_full_delivery": true,
+    "exclude_disposition": true,
+    "exclude_etf": false,
+    "exclude_ky": false,
+    "volume_filter": {
+      "method": "average_daily_volume",
+      "lookback_trading_days": 20,
+      "minimum_lots": 1000,
+      "include_signal_day": true,
+      "require_complete_window": true,
+      "status": "selected_from_research"
+    }
+  },
+  "notifications": {
+    "provider": "line_messaging_api",
+    "enabled": false
+  }
+}
