@@ -8,6 +8,23 @@ from .db import Session, Stock, Bar, ROOT, put, get, now
 from .ingest import history
 from .quality import audit
 
+def active():
+    """Probe the OS lock, not stale database status or a reused process id."""
+    lock=ROOT/'data'/'bulk.lock'
+    if not lock.exists():return False
+    with lock.open('r+b') as handle:
+        try:
+            if __import__('os').name=='nt':
+                import msvcrt
+                handle.seek(0);msvcrt.locking(handle.fileno(),msvcrt.LK_NBLCK,1)
+                handle.seek(0);msvcrt.locking(handle.fileno(),msvcrt.LK_UNLCK,1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+                fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
+            return False
+        except (OSError,BlockingIOError):return True
+
 def run(years=10,limit=None):
     lock=ROOT/'data'/'bulk.lock'
     # OS advisory file lock is released after process termination.

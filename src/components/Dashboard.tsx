@@ -7,14 +7,14 @@ import ScanFilters from "./ScanFilters";
 
 type Data = any;
 const links = [
-  ["/scan", "今日掃描", "◈"],
-  ["/watchlist", "鎖股清單", "◇"],
-  ["/stock/2330", "個股診斷", "⌁"],
-  ["/backtest", "策略回測", "↗"],
-  ["/portfolio", "持股追蹤", "▤"],
-  ["/rules", "規則筆記", "≡"],
-  ["/settings", "偏好設定", "⚙"],
-  ["/data", "資料管理", "▦"],
+  ["/scan", "今日掃描", "收盤訊號與市場水位"],
+  ["/watchlist", "鎖股清單", "追蹤候選股票與轉折"],
+  ["/stock/2330", "個股診斷", "K線、型態與選股檢查"],
+  ["/backtest", "策略回測", "檢驗策略、成本與風險"],
+  ["/portfolio", "持股追蹤", "部位、停損與目標管理"],
+  ["/rules", "規則筆記", "查閱策略定義與判讀限制"],
+  ["/settings", "偏好設定", "股票池、資金與交易成本"],
+  ["/data", "資料管理", "更新資料與檢查完整性"],
 ];
 const pct = (x: number | null | undefined) =>
   x == null ? "—" : `${(x * 100).toFixed(2)}%`;
@@ -143,12 +143,12 @@ function Curve({ rows }: { rows: { date: string; equity: number }[] }) {
       <svg viewBox="0 0 900 210" role="img" aria-label="回測資金曲線">
         <defs>
           <linearGradient id="fill" x1="0" x2="0" y1="0" y2="1">
-            <stop stopColor="#3c719c" stopOpacity=".2" />
-            <stop offset="1" stopColor="#3c719c" stopOpacity="0" />
+            <stop stopColor="#002fa7" stopOpacity=".14" />
+            <stop offset="1" stopColor="#002fa7" stopOpacity="0" />
           </linearGradient>
         </defs>
         <path d={path + " L900,210 L0,210 Z"} fill="url(#fill)" />
-        <path d={path} fill="none" stroke="#356e9e" strokeWidth="2" />
+        <path d={path} fill="none" stroke="#002fa7" strokeWidth="2" />
       </svg>
       <div className="between muted">
         <span>{rows[0].date}</span>
@@ -203,14 +203,23 @@ export default function Dashboard() {
     <div className="shell">
       <aside>
         <Link href="/scan" className="brand">
-          <span className="brandmark">S</span>
+          <span className="brandmark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path
+                d="M5 25V7M5 25H27M9 20L15 14L20 17L27 8"
+                stroke="currentColor"
+                strokeWidth="2.3"
+              />
+              <path d="M21 8H27V14" stroke="currentColor" strokeWidth="2.3" />
+            </svg>
+          </span>
           <div>
-            選股研究室<small>STOCK STRATEGY</small>
+            選股研究室<small>台股策略 · 個人研究</small>
           </div>
         </Link>
         <div className="side-label">研究與交易紀律</div>
-        <nav>
-          {links.map(([href, label, icon]) => (
+        <nav aria-label="主要導覽">
+          {links.map(([href, label], index) => (
             <Link
               key={href}
               className={
@@ -220,9 +229,17 @@ export default function Dashboard() {
                   : ""
               }
               href={href}
+              aria-current={
+                path.startsWith("/" + href.split("/")[1]) ||
+                (path === "/" && href === "/scan")
+                  ? "page"
+                  : undefined
+              }
             >
-              <span>{icon}</span>
-              {label}
+              <span className="nav-index" aria-hidden="true">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <span className="nav-title">{label}</span>
             </Link>
           ))}
         </nav>
@@ -233,8 +250,13 @@ export default function Dashboard() {
       <main>
         <header>
           <div>
-            <div className="eyebrow">TAIWAN EQUITY / RESEARCH</div>
+            <div className="eyebrow">台股上市櫃 / 收盤研究</div>
             <h1>{title}</h1>
+            <p className="page-description">
+              {links.find((x) =>
+                path.startsWith("/" + x[0].split("/")[1]),
+              )?.[2] || links[0][2]}
+            </p>
           </div>
           <form
             className="search"
@@ -250,11 +272,28 @@ export default function Dashboard() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="輸入股票代號，例如 2330"
             />
-            <button aria-label="查詢股票">⌕</button>
+            <button aria-label="查詢股票">
+              <svg
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="10.5"
+                  cy="10.5"
+                  r="6"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                />
+                <path d="m15 15 5 5" stroke="currentColor" strokeWidth="1.8" />
+              </svg>
+            </button>
           </form>
         </header>
         <div className="topline">
-          <span>用規則辨識訊號，用紀律管理風險。</span>
+          <span>資料範圍：收盤日K · 上市與上櫃</span>
           <small>已載入 {money(status.data?.bars)} 根日K</small>
         </div>
         {message && (
@@ -328,9 +367,19 @@ function Scan({ action, busy }: Actions) {
       (x: Data) =>
         (x.change ?? 0) * 100 >= filters.minChange &&
         (x.volume_ratio ?? 0) >= filters.minVolumeRatio &&
-        (!filters.eligibleOnly || (tab === "short" ? x.eligible_short : tab === "long" ? x.eligible_long : x.eligible)) &&
+        (!filters.eligibleOnly ||
+          (tab === "short"
+            ? x.eligible_short
+            : tab === "long"
+              ? x.eligible_long
+              : x.eligible)) &&
         (!filters.rulePrefix ||
-          x.signals.some((s: Data) => s.id.startsWith(filters.rulePrefix) || filters.rulePrefix.startsWith("L-") && s.id.startsWith("S-" + filters.rulePrefix.slice(2)))),
+          x.signals.some(
+            (s: Data) =>
+              s.id.startsWith(filters.rulePrefix) ||
+              (filters.rulePrefix.startsWith("L-") &&
+                s.id.startsWith("S-" + filters.rulePrefix.slice(2))),
+          )),
     );
   return (
     <>
@@ -533,51 +582,64 @@ function Watchlist({ action, busy }: Actions) {
         {!data?.length ? (
           <Empty text="尚未加入鎖股。可手動加入，或執行掃描自動收錄底部觀察訊號。" />
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>股票</th>
-                <th>入選理由</th>
-                <th>收盤</th>
-                <th>相對強弱</th>
-                <th>最新訊號</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((x: Data) => (
-                <tr key={x.key}>
-                  <td>
-                    <Link href={"/stock/" + x.key}>
-                      {x.key} {x.name}
-                    </Link>
-                  </td>
-                  <td>
-                    {x.reason}
-                    <small>{x.active === false ? "趨勢轉空，已移出候選" : x.automatic ? "自動入選" : "手動入選"}</small>
-                  </td>
-                  <td>{x.scan.close || "資料不足"}</td>
-                  <td>{pct(x.scan.relative_strength)}</td>
-                  <td>
-                    {x.scan.signals
-                      ?.map((s: Data) => s.name)
-                      .slice(0, 2)
-                      .join("、") || "等待突破"}
-                  </td>
-                  <td>
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        action(() => api("watchlist/" + x.key, "DELETE"))
-                      }
-                    >
-                      移除
-                    </button>
-                  </td>
+          <div
+            className="table-wrap"
+            tabIndex={0}
+            role="region"
+            aria-label="鎖股清單，可橫向捲動"
+          >
+            <table>
+              <thead>
+                <tr>
+                  <th>股票</th>
+                  <th>入選理由</th>
+                  <th>收盤</th>
+                  <th>相對強弱</th>
+                  <th>最新訊號</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.map((x: Data) => (
+                  <tr key={x.key}>
+                    <td>
+                      <Link href={"/stock/" + x.key}>
+                        {x.key} {x.name}
+                      </Link>
+                    </td>
+                    <td>
+                      {x.reason}
+                      <small>
+                        {x.active === false
+                          ? "趨勢轉空，已移出候選"
+                          : x.automatic
+                            ? "自動入選"
+                            : "手動入選"}
+                      </small>
+                    </td>
+                    <td>{x.scan.close || "資料不足"}</td>
+                    <td>{pct(x.scan.relative_strength)}</td>
+                    <td>
+                      {x.scan.signals
+                        ?.map((s: Data) => s.name)
+                        .slice(0, 2)
+                        .join("、") || "等待突破"}
+                    </td>
+                    <td>
+                      <button
+                        disabled={busy}
+                        onClick={() =>
+                          action(() => api("watchlist/" + x.key, "DELETE"))
+                        }
+                      >
+                        移除
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </>
@@ -662,7 +724,9 @@ function StockPage({ sid, action, busy }: Actions & { sid: string }) {
       <div className="two-col">
         <div className="panel">
           <h2>六六大順與選股評量</h2>
-          <p className="muted">以日線檢查股票池與每日工作；日週月評量另見下表。</p>
+          <p className="muted">
+            以日線檢查股票池與每日工作；日週月評量另見下表。
+          </p>
           <Checks rows={data.checks} />
         </div>
         <div>
@@ -782,15 +846,21 @@ function Backtest({ action, busy }: Actions) {
       sell_tax_rate: 0.003,
       annual_short_borrow_rate: 0.03,
     });
-  const set = (k: string, v: Data) => setForm((previous: Data) => ({ ...previous, [k]: v }));
+  const set = (k: string, v: Data) =>
+    setForm((previous: Data) => ({ ...previous, [k]: v }));
   useEffect(() => {
     if (settings.data && !initializedBroker.current) {
       initializedBroker.current = true;
-      setForm((previous: Data) => ({ ...previous, broker_profile_id: settings.data.backtest.broker_profile_id }));
+      setForm((previous: Data) => ({
+        ...previous,
+        broker_profile_id: settings.data.backtest.broker_profile_id,
+      }));
     }
   }, [settings.data]);
-  if (settings.error || rules.error) return <Notice>{settings.error || rules.error}</Notice>;
-  if (!settings.data || !rules.data) return <div className="empty">讀取策略規則與券商設定中…</div>;
+  if (settings.error || rules.error)
+    return <Notice>{settings.error || rules.error}</Notice>;
+  if (!settings.data || !rules.data)
+    return <div className="empty">讀取策略規則與券商設定中…</div>;
   async function run() {
     const resp = await action(() =>
       api("backtests", "POST", {
@@ -1017,7 +1087,14 @@ function Backtest({ action, busy }: Actions) {
             />
             啟用大盤濾網
           </label>
-          <label className="checkbox"><input type="checkbox" checked={form.elimination_filter} onChange={(e) => set("elimination_filter", e.target.checked)} />啟用淘汰法可計算項（未知項須人工核對）</label>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={form.elimination_filter}
+              onChange={(e) => set("elimination_filter", e.target.checked)}
+            />
+            啟用淘汰法可計算項（未知項須人工核對）
+          </label>
           <label className="checkbox">
             <input
               type="checkbox"
@@ -1191,45 +1268,57 @@ function Backtest({ action, busy }: Actions) {
       <div className="panel">
         <h2>已保存回測與策略比較</h2>
         {runs.data?.length ? (
-          <table>
-            <thead>
-              <tr>
-                <th>策略</th>
-                <th>策略停損</th>
-                <th>區間</th>
-                <th>報酬</th>
-                <th>回撤</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {runs.data.map((x: Data) => (
-                <tr key={x.id}>
-                  <td>
-                    {x.params.exit_mode} · {x.params.rule_ids?.join(",")}
-                  </td>
-                  <td>{x.params.stop_method || "fixed"} · {pct(x.params.settings_snapshot?.risk.strategy_stop_ratio)}</td>
-                  <td>
-                    {x.params.start} — {x.params.end}
-                  </td>
-                  <td>{pct(x.summary.total_return)}</td>
-                  <td>{pct(x.summary.max_drawdown)}</td>
-                  <td>
-                    <button
-                      onClick={() =>
-                        action(async () => {
-                          setResult(await api("backtests/" + x.id));
-                          return null;
-                        })
-                      }
-                    >
-                      查看
-                    </button>
-                  </td>
+          <div
+            className="table-wrap"
+            tabIndex={0}
+            role="region"
+            aria-label="已保存回測與策略比較，可橫向捲動"
+          >
+            <table>
+              <thead>
+                <tr>
+                  <th>策略</th>
+                  <th>策略停損</th>
+                  <th>區間</th>
+                  <th>報酬</th>
+                  <th>回撤</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {runs.data.map((x: Data) => (
+                  <tr key={x.id}>
+                    <td>
+                      {x.params.exit_mode} · {x.params.rule_ids?.join(",")}
+                    </td>
+                    <td>
+                      {x.params.stop_method || "fixed"} ·{" "}
+                      {pct(
+                        x.params.settings_snapshot?.risk.strategy_stop_ratio,
+                      )}
+                    </td>
+                    <td>
+                      {x.params.start} — {x.params.end}
+                    </td>
+                    <td>{pct(x.summary.total_return)}</td>
+                    <td>{pct(x.summary.max_drawdown)}</td>
+                    <td>
+                      <button
+                        onClick={() =>
+                          action(async () => {
+                            setResult(await api("backtests/" + x.id));
+                            return null;
+                          })
+                        }
+                      >
+                        查看
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <p className="muted">執行多組策略後，會在這裡保留結果供比較。</p>
         )}
@@ -1259,7 +1348,8 @@ function Portfolio({ action, busy }: Actions) {
         .slice(0, 7),
     ),
     [ret, setRet] = useState("");
-  const set = (k: string, v: Data) => setForm((previous: Data) => ({ ...previous, [k]: v }));
+  const set = (k: string, v: Data) =>
+    setForm((previous: Data) => ({ ...previous, [k]: v }));
   return (
     <>
       <div className="stats">
@@ -1287,13 +1377,19 @@ function Portfolio({ action, busy }: Actions) {
           onSubmit={(e) => {
             e.preventDefault();
             action(() =>
-              api(editingId ? "portfolio/" + editingId : "portfolio", editingId ? "PUT" : "POST", {
-                ...form,
-                entry_price: +form.entry_price,
-                shares: +form.shares,
-                stop_price: form.stop_price ? +form.stop_price : null,
-              }),
-            ).then((saved) => { if(saved) setEditingId(null); });
+              api(
+                editingId ? "portfolio/" + editingId : "portfolio",
+                editingId ? "PUT" : "POST",
+                {
+                  ...form,
+                  entry_price: +form.entry_price,
+                  shares: +form.shares,
+                  stop_price: form.stop_price ? +form.stop_price : null,
+                },
+              ),
+            ).then((saved) => {
+              if (saved) setEditingId(null);
+            });
           }}
         >
           <div className="form-grid">
@@ -1371,11 +1467,28 @@ function Portfolio({ action, busy }: Actions) {
                 <option value="ma10">MA10單一均線</option>
               </select>
             </label>
-            {form.exit_mode === "scale" && <label>已減碼比例 %<input type="number" min="0" max="99" value={(form.scaled_fraction || 0) * 100} onChange={(e) => set("scaled_fraction", +e.target.value / 100)} /></label>}
+            {form.exit_mode === "scale" && (
+              <label>
+                已減碼比例 %
+                <input
+                  type="number"
+                  min="0"
+                  max="99"
+                  value={(form.scaled_fraction || 0) * 100}
+                  onChange={(e) =>
+                    set("scaled_fraction", +e.target.value / 100)
+                  }
+                />
+              </label>
+            )}
             <button className="primary" disabled={busy}>
               {editingId ? "保存持股修改" : "新增持股"}
             </button>
-            {editingId && <button type="button" onClick={() => setEditingId(null)}>取消編輯</button>}
+            {editingId && (
+              <button type="button" onClick={() => setEditingId(null)}>
+                取消編輯
+              </button>
+            )}
           </div>
         </form>
         {error && <Notice>{error}</Notice>}
@@ -1410,8 +1523,14 @@ function Portfolio({ action, busy }: Actions) {
                     </td>
                     <td>
                       <b>
-                        {{ hold: "續抱", reduce: "減碼", exit: "出場", restore: "補回建議" }[
-                          x.action?.action as "hold" | "reduce" | "exit" | "restore"
+                        {{
+                          hold: "續抱",
+                          reduce: "減碼",
+                          exit: "出場",
+                          restore: "補回建議",
+                        }[
+                          x.action?.action as
+                            "hold" | "reduce" | "exit" | "restore"
                         ] || "資料不足"}
                       </b>
                       <small>{x.action?.reason}</small>
@@ -1422,7 +1541,24 @@ function Portfolio({ action, busy }: Actions) {
                       {x.add_on_hint && <Tag>可觀察加碼位置</Tag>}
                     </td>
                     <td>
-                      <button disabled={busy} onClick={() => { setEditingId(x.id); setForm({stock_id:x.stock_id,entry_date:x.entry_date,entry_price:x.entry_price,shares:x.shares,direction:x.direction,stop_price:x.stop_price || "",exit_mode:x.exit_mode,scaled_fraction:x.scaled_fraction || 0}); }}>編輯</button>
+                      <button
+                        disabled={busy}
+                        onClick={() => {
+                          setEditingId(x.id);
+                          setForm({
+                            stock_id: x.stock_id,
+                            entry_date: x.entry_date,
+                            entry_price: x.entry_price,
+                            shares: x.shares,
+                            direction: x.direction,
+                            stop_price: x.stop_price || "",
+                            exit_mode: x.exit_mode,
+                            scaled_fraction: x.scaled_fraction || 0,
+                          });
+                        }}
+                      >
+                        編輯
+                      </button>
                       <button
                         disabled={busy}
                         onClick={() =>
@@ -1886,7 +2022,12 @@ function Settings({ action, busy }: Actions) {
               </label>
               <span>
                 實際{" "}
-                {(p.commission_base_rate * p.commission_discount_multiplier * 100).toFixed(4)}%
+                {(
+                  p.commission_base_rate *
+                  p.commission_discount_multiplier *
+                  100
+                ).toFixed(4)}
+                %
               </span>
               <button
                 disabled={

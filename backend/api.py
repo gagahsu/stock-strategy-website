@@ -68,7 +68,13 @@ def health(): return {'status':'ok','version':'1.0.0'}
 def status():
     with Session() as s:
         counts=s.query(Bar.stock_id,func.count(Bar.date),func.min(Bar.date),func.max(Bar.date),func.sum(Bar.adjustment_verified)).group_by(Bar.stock_id).all()
-        return {'stocks':s.query(Stock).count(),'bars':s.query(Bar).count(),'coverage':[{'id':id,'rows':n,'first':first,'last':last,'verified':int(verified or 0)} for id,n,first,last,verified in counts],'ingest':records(s,'ingest'),'bulk':get(s,'bulk','latest'),'quality':get(s,'quality_summary','latest'),'jobs':records(s,'job')[:20],'line_configured':bool(os.getenv('LINE_CHANNEL_ACCESS_TOKEN') and os.getenv('LINE_RECIPIENT_USER_ID'))}
+        from .worker import active
+        bulk_status=get(s,'bulk','latest')
+        if bulk_status:
+            bulk_status['active']=active()
+            if not bulk_status['active'] and bulk_status.get('status') in ('running','cooldown'):
+                bulk_status.update(status='interrupted',error='回補程序已結束，已完成資料保留；可按繼續回補。')
+        return {'stocks':s.query(Stock).count(),'bars':s.query(Bar).count(),'coverage':[{'id':id,'rows':n,'first':first,'last':last,'verified':int(verified or 0)} for id,n,first,last,verified in counts],'ingest':records(s,'ingest'),'bulk':bulk_status,'quality':get(s,'quality_summary','latest'),'jobs':records(s,'job')[:20],'line_configured':bool(os.getenv('LINE_CHANNEL_ACCESS_TOKEN') and os.getenv('LINE_RECIPIENT_USER_ID'))}
 
 @app.get('/api/stocks')
 def stocks(q:str='',limit:int=100):
@@ -146,6 +152,8 @@ def bulk(command:str):
     if command!='start':raise ValueError('不支援的批次操作')
     import subprocess,sys
     if flag.exists():flag.unlink()
+    from .worker import active
+    if active():return {'status':'already_running','message':'回補正在執行，保留目前進度。'}
     log=(ROOT/'data'/'bulk.log').open('a',encoding='utf-8')
     errors=(ROOT/'data'/'bulk-error.log').open('a',encoding='utf-8')
     process=subprocess.Popen([sys.executable,'-m','backend.worker','--years','10'],cwd=ROOT,stdout=log,stderr=errors,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)

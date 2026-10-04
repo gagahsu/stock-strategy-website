@@ -1,6 +1,7 @@
 """Book-backed rules. Geometric/subjective proxies are explicitly labelled."""
 import math
 from .features import clean
+from .pattern_specs import SPECS
 
 ENTRY_NAMES=['打底完成','突破盤整','拉回','回後買上漲','K線橫盤突破','ABC 突破','型態確認','突破大量黑K']
 BULL_NAMES=['低檔大量長紅K','破切反彈過高大漲','大量雙腳反轉','缺口之上續漲','碎步上漲攻擊','底部洗盤上攻大漲','空轉多過空高','紅黑紅上漲','突破大量黑K','低檔連2日大量被突破','低檔大量長下影線','月線上盤整突破','雙盤底大量突破','雙弧底大量突破','均線糾結紅K突破','突破ABC上漲','島型反轉','突破上升軌道線']
@@ -19,7 +20,11 @@ def catalogue():
     for direction in ('L','S'):
         for i in range(1,7): add(f'{direction}-HW-{i}',HW_NAMES[direction][i-1],'12-1','long' if direction=='L' else 'short',i in (1,4,6))
     for prefix,names,direction in [('P-BULL',BULL_NAMES,'long'),('P-BEAR',BEAR_NAMES,'short')]:
-        for i,name in enumerate(names,1): add(f'{prefix}-{i}',name,'12-4',direction,True,'pattern')
+        for i,name in enumerate(names,1):
+            id=f'{prefix}-{i}'
+            add(id,name,'12-4',direction,True,'pattern')
+            items[-1].update(SPECS[id])
+            items[-1]['description']=SPECS[id]['condition']+' 限制：'+SPECS[id]['limitation']
     for i,name in enumerate(M_NAMES,1): add(f'M-{i}',name,'11-3','warning',True,'warning')
     for i,name in enumerate(BOTTOM_NAMES,1): add(f'L-BOTTOM-{i}',name,'10-4',proxy=True)
     for id,name,chapter,proxy in [('L-2ND-WAVE','強勢飆股第2波','10-3',True),('L-RIGHT-FOOT','黃金右腳','2-2',False),('L-GAP-BREAKOUT','向上突破缺口','9-2',True),('L-3D2G','3日2缺口','9-5',False),('L-MA-TANGLE-BO','均線糾結突破','4-2',False),('L-BB-SQUEEZE-BO','布林收斂突破','8-5',True)]: add(id,name,chapter,proxy=proxy)

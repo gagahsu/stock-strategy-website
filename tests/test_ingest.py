@@ -1,4 +1,5 @@
 import pytest
+import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from backend.db import Base, Bar, get
@@ -59,3 +60,14 @@ def test_invalid_price_is_quarantined_without_rolling_back_valid_history(tmp_pat
         assert checkpoint['rows']==2 and checkpoint['extras_completed']
         assert checkpoint['rejected_dates']==['2024-01-03']
         assert get(s,'rejected_bar','TEST','2024-01-03')['row']==rows[1]
+
+
+def test_quota_failure_does_not_burst_retry_or_leak_token(monkeypatch):
+    calls=[]
+    def provider(url,**kwargs):
+        calls.append(url)
+        return httpx.Response(402,request=httpx.Request('GET',url),json={'status':402})
+    monkeypatch.setattr(ingest.httpx,'get',provider)
+    with pytest.raises(RuntimeError,match='HTTP 402') as error:
+        ingest.fetch(ingest.FIN,{'token':'mock-secret'})
+    assert len(calls)==1 and 'mock-secret' not in str(error.value)

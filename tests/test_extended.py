@@ -126,3 +126,27 @@ def test_chart_period_does_not_turn_daily_volume_filter_into_weekly_volume(monke
     month=service.stock_data(SessionStub(),'TEST','month')
     assert len(day['bars'])>len(week['bars'])>len(month['bars'])
     assert day['checks']==week['checks']==month['checks']
+
+
+def test_stale_institutional_days_remain_unknown():
+    raw=frame(150)
+    stale=[{'date':d,'buy':0,'sell':100} for d in raw.date.iloc[-6:-3]]
+    missing=assessment(raw,{}, {'chips_daily':stale})
+    assert missing['institutional_selling'] is None
+    assert next(x for x in missing['fundamental'] if x['name']=='法人買超')['passed'] is None
+    current=[{'date':d,'buy':0,'sell':100} for d in raw.date.tail(3)]
+    complete=assessment(raw,{}, {'chips_daily':stale+current})
+    assert complete['institutional_selling'] is True
+
+
+def test_month_revenue_period_does_not_imply_publication_on_first_day():
+    raw=frame(150)
+    prior={'date':'2023-07-01','create_time':'2023-07-10','revenue':100,'revenue_year':2023,'revenue_month':6}
+    current={'date':'2024-07-01','create_time':'2024-07-29','revenue':150,'revenue_year':2024,'revenue_month':6}
+    result=assessment(raw,{}, {'fundamentals':[prior,current]})
+    assert next(x for x in result['fundamental'] if x['name']=='營收年增')['passed'] is None
+    current['create_time']='2024-07-20'
+    result=assessment(raw,{}, {'fundamentals':[prior,current]})
+    assert next(x for x in result['fundamental'] if x['name']=='營收年增')['passed'] is True
+    from backend.availability import known_as_of
+    assert not known_as_of({'date':'2024-03-31','type':'EPS','value':10},'financials','2024-04-01')

@@ -9,7 +9,7 @@ function Stop-OwnedTree([int]$rootPid) {
     if (-not $root) { return }
     if ($root.CommandLine -notlike "*$projectPath*" -and $root.CommandLine -notmatch 'npm.cmd.*run start') { throw '拒絕停止非本次建立的服務。' }
     $ids=[System.Collections.Generic.List[int]]::new();$ids.Add($rootPid)
-    for($i=0;$i -lt $ids.Count;$i++) { foreach($child in ($processes | Where-Object ParentProcessId -eq $ids[$i])) { $ids.Add([int]$child.ProcessId) } }
+    for($i=0;$i -lt $ids.Count;$i++) { foreach($child in ($processes | Where-Object ParentProcessId -eq $ids[$i])) { if($child.CommandLine -notmatch '\s-m\s+backend\.worker(?:\s|$)') { $ids.Add([int]$child.ProcessId) } } }
     for($i=$ids.Count-1;$i -ge 0;$i--) { Stop-Process -Id $ids[$i] -ErrorAction SilentlyContinue }
 }
 foreach($taskProcessId in $ReplaceProcessIds) { Stop-OwnedTree $taskProcessId }

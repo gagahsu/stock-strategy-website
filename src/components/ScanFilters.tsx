@@ -45,7 +45,7 @@ export default function ScanFilters({
     setError("已保存條件");
   }
   return (
-    <div>
+    <div className="scan-filters">
       <div className="form-grid">
         <label>
           最低當日漲幅 %
@@ -94,13 +94,17 @@ export default function ScanFilters({
         </label>
         <label>
           自訂條件名稱
-          <input value={name} onChange={(e) => setName(e.target.value)} />
+          <input
+            value={name}
+            placeholder="例如：放量突破"
+            onChange={(e) => setName(e.target.value)}
+          />
         </label>
         <button disabled={!name.trim()} onClick={save}>
           保存掃描條件
         </button>
       </div>
-      <div className="chips">
+      <div className="chips" aria-label="已保存的掃描條件">
         {presets.map((x) => (
           <button key={x.key} onClick={() => update(x.filters)}>
             {x.name}

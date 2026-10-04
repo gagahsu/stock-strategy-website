@@ -53,22 +53,25 @@ export default function Chart({
       height: 390,
       layout: {
         background: { type: ColorType.Solid, color: "#ffffff" },
-        textColor: "#556473",
+        textColor: "#727782",
+        fontFamily:
+          '"Helvetica Neue", Helvetica, "Microsoft JhengHei", Arial, sans-serif',
+        fontSize: 11,
         attributionLogo: true,
       },
       grid: {
-        vertLines: { color: "#f1f4f6" },
-        horzLines: { color: "#f1f4f6" },
+        vertLines: { color: "#f2f2f5" },
+        horzLines: { color: "#f2f2f5" },
       },
-      rightPriceScale: { borderColor: "#e0e6eb" },
-      timeScale: { borderColor: "#e0e6eb" },
+      rightPriceScale: { borderColor: "#e4e5e9" },
+      timeScale: { borderColor: "#e4e5e9" },
     });
     const candles = chart.addSeries(CandlestickSeries, {
-      upColor: "#d3514d",
-      downColor: "#299477",
+      upColor: "#c43d47",
+      downColor: "#22816a",
       borderVisible: false,
-      wickUpColor: "#d3514d",
-      wickDownColor: "#299477",
+      wickUpColor: "#c43d47",
+      wickDownColor: "#22816a",
     });
     candles.setData(
       bars.map((x) => ({
@@ -140,10 +143,10 @@ export default function Chart({
       bars.map((x) => ({
         time: x.date as Time,
         value: x.volume / 1000,
-        color: x.close >= x.open ? "#d3514d55" : "#29947755",
+        color: x.close >= x.open ? "#c43d4744" : "#22816a44",
       })),
     );
-    const colors = ["#bf932f", "#579bc1", "#805bae", "#bba3a3"];
+    const colors = ["#b78c27", "#397ab7", "#7964a2", "#a5a5ae"];
     (["ma5", "ma10", "ma20", "ma60"] as const).forEach((key, i) => {
       const line = chart.addSeries(LineSeries, {
         color: colors[i],
@@ -171,18 +174,41 @@ export default function Chart({
           ({
             time: x.date as Time,
             position: x.direction === "long" ? "belowBar" : "aboveBar",
-            color: x.direction === "long" ? "#d3514d" : "#299477",
+            color: x.direction === "long" ? "#c43d47" : "#22816a",
             shape: x.direction === "long" ? "arrowUp" : "arrowDown",
             text: showNames ? x.name : "",
           }) as const,
       ),
     );
     if (showAll || bars.length <= 120) chart.timeScale().fitContent();
-    else chart.timeScale().setVisibleLogicalRange({ from: bars.length - 120, to: bars.length + 3 });
+    else
+      chart
+        .timeScale()
+        .setVisibleLogicalRange({
+          from: bars.length - 120,
+          to: bars.length + 3,
+        });
     return () => chart.remove();
   }, [bars, signals, gaps, kind, showNames, showAll]);
-  return <>
-    <div className="row"><label className="checkbox"><input type="checkbox" checked={showNames} onChange={(e) => setShowNames(e.target.checked)} />顯示訊號名稱</label><button onClick={() => setShowAll(!showAll)}>{showAll ? "最近120根K線" : "顯示完整期間"}</button><span className="muted">紅箭頭：多方訊號 · 綠箭頭：空方訊號；可拖曳與縮放</span></div>
-    <div ref={ref} className="chart" aria-label="股票K線與均線圖" />
-  </>;
+  return (
+    <>
+      <div className="row chart-controls">
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={showNames}
+            onChange={(e) => setShowNames(e.target.checked)}
+          />
+          顯示訊號名稱
+        </label>
+        <button onClick={() => setShowAll(!showAll)}>
+          {showAll ? "最近120根K線" : "顯示完整期間"}
+        </button>
+        <span className="muted">
+          紅箭頭：多方訊號 · 綠箭頭：空方訊號；可拖曳與縮放
+        </span>
+      </div>
+      <div ref={ref} className="chart" aria-label="股票K線與均線圖" />
+    </>
+  );
 }

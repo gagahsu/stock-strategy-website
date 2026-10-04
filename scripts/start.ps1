@@ -12,6 +12,6 @@ try {
 } finally {
     $processes=@(Get-CimInstance Win32_Process)
     $ids=[System.Collections.Generic.List[int]]::new();$ids.Add($backend.Id)
-    for($i=0;$i -lt $ids.Count;$i++) { foreach($child in ($processes | Where-Object ParentProcessId -eq $ids[$i])) { $ids.Add([int]$child.ProcessId) } }
+    for($i=0;$i -lt $ids.Count;$i++) { foreach($child in ($processes | Where-Object ParentProcessId -eq $ids[$i])) { if($child.CommandLine -notmatch '\s-m\s+backend\.worker(?:\s|$)') { $ids.Add([int]$child.ProcessId) } } }
     for($i=$ids.Count-1;$i -ge 0;$i--) { Stop-Process -Id $ids[$i] -ErrorAction SilentlyContinue }
 }

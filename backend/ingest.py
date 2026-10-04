@@ -25,7 +25,8 @@ def fetch(url, params=None):
                 raise ValueError(f"Data provider status {data.get('status')}: {data.get('msg','request failed')}")
             return data
         except (httpx.HTTPError, ValueError) as exc:
-            if attempt == 3:
+            quota=isinstance(exc,httpx.HTTPStatusError) and exc.response.status_code==402
+            if attempt == 3 or quota:
                 status=f' HTTP {exc.response.status_code}' if isinstance(exc,httpx.HTTPStatusError) else ''
                 raise RuntimeError(f'資料來源暫時不可用：{url.split("?")[0]} ({type(exc).__name__}{status})') from exc
             time.sleep(min(2 ** attempt, 8))

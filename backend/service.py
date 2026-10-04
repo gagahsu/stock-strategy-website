@@ -7,6 +7,7 @@ from .features import features, aggregate, gaps, clean
 from .rules import detect, checks, market_state, exit_signal
 from .sop import daily_sop
 from .assessment import assessment
+from .availability import known_as_of
 
 def stock_data(s,sid,period='day',end=None):
     st=s.get(Stock,sid)
@@ -38,7 +39,7 @@ def stock_data(s,sid,period='day',end=None):
 def records_for(s,kind,key,end=None,limit=20):
     r=s.query(Record).filter_by(kind=kind,key=key).order_by(Record.date.desc()).first()
     data=json.loads(r.payload).get('rows',[]) if r else []
-    if end:data=[x for x in data if x.get('date','9999')<=end]
+    if end:data=[x for x in data if known_as_of(x,kind,end)]
     return data[-limit:] if limit else data
 
 def institutional_direction(s,sid,f):

@@ -1,5 +1,6 @@
 """Book evaluation table. Unknown information remains unknown; all dates are as-of."""
 from .features import features, aggregate, clean
+from .availability import known_as_of
 
 
 def assessment(raw, metadata, context, market=None, industry_rank=None):
@@ -28,22 +29,23 @@ def assessment(raw, metadata, context, market=None, industry_rank=None):
     add('策略','短線守MA5／長線守MA20' if x.bull3 else '等待排列及突破确认')
     chips=context.get('chips_daily',[])
     chips=[r for r in chips if r.get('date','9999')<=asof]
-    dates=sorted({r['date'] for r in chips})[-3:]
+    dates=day.date.tail(3).tolist()
+    complete_chips=len(dates)==3 and set(dates).issubset({r['date'] for r in chips})
     nets=[sum(float(r.get('buy',0))-float(r.get('sell',0)) for r in chips if r['date']==d) for d in dates]
-    add('法人最近3日淨買賣超',sum(nets) if len(dates)==3 else None,'買入股數減賣出股數，不含未来日期')
+    add('法人最近3日淨買賣超',sum(nets) if complete_chips else None,'最近3個個股交易日；缺漏維持未知，不含未来日期')
     margin=[r for r in context.get('margin_daily',[]) if r.get('date','9999')<=asof]
     m=margin[-1] if margin else {}
     add('融資餘額',m.get('MarginPurchaseTodayBalance'))
     add('融券餘額',m.get('ShortSaleTodayBalance'))
-    revenues=[r for r in context.get('fundamentals',[]) if r.get('date','9999')<=asof]
+    revenues=[r for r in context.get('fundamentals',[]) if known_as_of(r,'fundamentals',asof)]
     latest=revenues[-1] if revenues else None
     prior=next((r for r in reversed(revenues) if latest and r.get('revenue_year')==latest.get('revenue_year',0)-1 and r.get('revenue_month')==latest.get('revenue_month')),None)
     yoy=float(latest['revenue'])/float(prior['revenue'])-1 if latest and prior and prior.get('revenue') else None
     capital=metadata.get('paid_in_capital') if metadata.get('capital_date','9999')<=asof else None
     bases=[{'name':'熱門類股','passed':industry_rank is not None and industry_rank<=3 if industry_rank else None,'reason':'20日報酬前三類股；不代表新聞題材'},
            {'name':'股本50億以下','passed':capital<5_000_000_000 if capital is not None else None,'reason':f'{capital:,.0f}元' if capital is not None else '當期股本資料尚未取得'},
-           {'name':'營收年增','passed':yoy>0 if yoy is not None else None,'reason':f'{yoy:.2%}' if yoy is not None else '去年同期資料不足'},
-           {'name':'法人買超','passed':sum(nets)>0 if len(dates)==3 else None,'reason':'最近3交易日合計'}]
+           {'name':'營收年增','passed':yoy>0 if yoy is not None else None,'reason':f'{yoy:.2%}（依來源公開／建立日）' if yoy is not None else '當時可取得的同期資料不足；缺公開日期不假設已公布'},
+           {'name':'法人買超','passed':sum(nets)>0 if complete_chips else None,'reason':'最近3個個股交易日合計；缺漏維持未知'}]
     side=1 if x.trend!='bear' else -1
     bodies=day.body.tail(3)*side
     weekly_level=w.high60 if side==1 else w.low60
@@ -51,4 +53,4 @@ def assessment(raw, metadata, context, market=None, industry_rank=None):
     pass_values=[side*(x.close-x.ma20)>0,not bool((bodies>0).all()),not bool((x.price_divergence or x.kd_divergence) and (x.k>80 if side==1 else x.k<20) and abs(x.bias20)>.15),not pressure,side*(x.close-x.ma20)>0,not bool(x.lower_low5 if side==1 else x.higher_high5),bool(x.close>x.range_high if side==1 else x.close<x.range_low),x.trend==('bull' if side==1 else 'bear'),not bool((bodies>.035).all() and x.volume_ratio>=2),side*x.body>0]
     names=['月線方向','不追第3根','背離／乖離風險','週線支阻距離','回檔／反彈後月線','前低／前高守住','退出盤整區','順勢非逆勢','不追連續急漲跌','進場K顏色配合']
     commands=[{'name':('做多' if side==1 else '做空')+'戒律 '+str(i+1)+'：'+name,'passed':bool(v),'reason':'日週已完成K數值判斷；距支阻5%為近似','hard':False} for i,(name,v) in enumerate(zip(names,pass_values))]
-    return clean({'technical':rows,'fundamental':bases,'commandments':commands,'weekly_pressure':pressure,'institutional_selling':all(v<0 for v in nets) if len(dates)==3 else None})
+    return clean({'technical':rows,'fundamental':bases,'commandments':commands,'weekly_pressure':pressure,'institutional_selling':all(v<0 for v in nets) if complete_chips else None})
