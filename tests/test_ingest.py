@@ -6,6 +6,24 @@ from backend.db import Base, Bar, get
 from backend import ingest
 
 
+def test_recent_pass_preserves_completed_ten_year_checkpoint(tmp_path,monkeypatch):
+    from backend.db import put
+    engine=create_engine('sqlite:///'+str(tmp_path/'resume.db'))
+    Base.metadata.create_all(engine)
+    isolated=sessionmaker(engine)
+    monkeypatch.setattr(ingest,'Session',isolated)
+    def forbidden(*args):raise AssertionError('completed price dataset must not be downloaded again')
+    monkeypatch.setattr(ingest,'fin',forbidden)
+    monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:None)
+    with isolated.begin() as s:put(s,'ingest','TEST',{'start':'2016-01-01','end':'2026-10-02','rows':2400,'status':'ok','extras_completed':True,'completed_datasets':['TaiwanStockMonthRevenue']})
+    ingest.history('TEST','2025-10-01','2026-10-02',extras=False)
+    with isolated() as s:
+        ck=get(s,'ingest','TEST')
+        assert ck['start']=='2016-01-01' and ck['rows']==2400
+        assert ck['extras_completed'] is True
+        assert ck['completed_datasets']==['TaiwanStockMonthRevenue']
+
+
 def test_partial_backfill_resumes_without_repeating_completed_datasets(tmp_path,monkeypatch):
     engine=create_engine('sqlite:///'+str(tmp_path/'ingest.db'))
     Base.metadata.create_all(engine)

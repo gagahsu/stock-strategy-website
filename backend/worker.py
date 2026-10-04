@@ -25,6 +25,14 @@ def active():
             return False
         except (OSError,BlockingIOError):return True
 
+def phase_complete(s,sid,start,end,extras):
+    ck=get(s,'ingest',sid,default={})
+    covers=ck.get('start','9999')<=start and ck.get('end','')>=end
+    if extras:return covers and ck.get('status')=='ok' and ck.get('extras_completed',False)
+    adjustment=get(s,'adjustment_audit',sid,default={})
+    return covers and ck.get('status') in ('partial','ok') and adjustment.get('end','')>=end
+
+
 def run(years=10,limit=None):
     lock=ROOT/'data'/'bulk.lock'
     # OS advisory file lock is released after process termination.
@@ -46,32 +54,41 @@ def run(years=10,limit=None):
         latest_market_day=s.query(Bar).filter_by(stock_id='TAIEX').order_by(Bar.date.desc()).first()
         required_end=latest_market_day.date if latest_market_day else date.today().isoformat()
     if limit: ids=ids[:limit]
-    done=0
-    for sid in ids:
+    recent_start=(date.fromisoformat(required_end)-timedelta(days=370)).isoformat()
+    phases=[('scan',recent_start,False),('history',start,True)]
+    for phase,phase_start,extras in phases:
+        done=0
+        for sid in ids:
+            if (ROOT/'data'/'STOP_BACKFILL').exists():break
+            with Session() as s:
+                complete=phase_complete(s,sid,phase_start,required_end,extras)
+            if complete:done+=1;continue
+            success=False
+            while not success:
+                try:
+                    result=history(sid,phase_start,end=required_end,extras=extras)
+                    success=True;done+=1
+                    print(json.dumps(result,ensure_ascii=False),flush=True)
+                    with Session.begin() as s:put(s,'bulk','latest',{'status':'running','phase':phase,'stock_id':sid,'done':done,'total':len(ids),'updated_at':now()})
+                    if phase=='scan' and done%50==0:
+                        from .service import scan
+                        scan()
+                    time.sleep(2)
+                except Exception as exc:
+                    with Session.begin() as s:put(s,'bulk','latest',{'status':'cooldown','phase':phase,'stock_id':sid,'done':done,'total':len(ids),'error':str(exc),'updated_at':now(),'retry_seconds':600})
+                    for _ in range(60):
+                        if (ROOT/'data'/'STOP_BACKFILL').exists():
+                            with Session.begin() as s:put(s,'bulk','latest',{'status':'stopped','phase':phase,'done':done,'total':len(ids),'updated_at':now()})
+                            handle.close();return
+                        time.sleep(10)
         if (ROOT/'data'/'STOP_BACKFILL').exists():break
-        with Session() as s:
-            ck=get(s,'ingest',sid,default={})
-            complete=ck.get('start','9999')<=start and ck.get('end','')>=required_end and ck.get('status')=='ok' and ck.get('extras_completed',False)
-        if complete:done+=1;continue
-        success=False
-        while not success:
-            try:
-                result=history(sid,start,end=required_end,extras=True)
-                success=True;done+=1
-                print(json.dumps(result,ensure_ascii=False),flush=True)
-                with Session.begin() as s:put(s,'bulk','latest',{'status':'running','stock_id':sid,'done':done,'total':len(ids),'updated_at':now()})
-                time.sleep(2)
-            except Exception as exc:
-                # Provider quota and unavailable networks leave durable checkpoint.
-                with Session.begin() as s:put(s,'bulk','latest',{'status':'cooldown','stock_id':sid,'done':done,'total':len(ids),'error':str(exc),'updated_at':now(),'retry_seconds':600})
-                for _ in range(60):
-                    if (ROOT/'data'/'STOP_BACKFILL').exists():
-                        with Session.begin() as s:put(s,'bulk','latest',{'status':'stopped','done':done,'total':len(ids),'updated_at':now()})
-                        handle.close();return
-                    time.sleep(10)
+        if phase=='scan':
+            from .service import scan
+            scan()
     audit()
-    with Session.begin() as s:put(s,'bulk','latest',{'status':'done' if done==len(ids) else 'stopped','done':done,'total':len(ids),'updated_at':now()})
+    with Session.begin() as s:put(s,'bulk','latest',{'status':'done' if done==len(ids) else 'stopped','phase':phase,'done':done,'total':len(ids),'updated_at':now()})
     handle.close()
+
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--years',type=int,default=10);p.add_argument('--limit',type=int)

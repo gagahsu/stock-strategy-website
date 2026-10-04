@@ -159,6 +159,8 @@ def history(sid, start, end=None, extras=True):
     fid = 'TAIEX' if sid=='TAIEX' else sid
     with Session() as s: checkpoint=get(s,'ingest',sid,default={})
     resumed=checkpoint.get('status') in ('partial','ok') and checkpoint.get('start','9999')<=start and checkpoint.get('end','')>=end
+    effective_start=checkpoint['start'] if resumed else start
+    effective_end=checkpoint['end'] if resumed else end
     rows=[] if resumed else fin('TaiwanStockPrice',fid,start,end)
     rejected=checkpoint.get('rejected_dates',[]) if resumed else []
     accepted=0
@@ -172,7 +174,7 @@ def history(sid, start, end=None, extras=True):
                 rejected.append(x.get('date','unknown'))
                 put(s,'rejected_bar',sid,{'row':x,'reason':str(exc),'updated_at':now()},x.get('date','unknown'))
         row_count=checkpoint.get('rows',0) if resumed else accepted
-        put(s,'ingest',sid,{'start':start,'end':end,'rows':row_count,'rejected_dates':rejected,'updated_at':now(),'status':'partial','completed_datasets':checkpoint.get('completed_datasets',[]) if resumed else []})
+        put(s,'ingest',sid,{'start':effective_start,'end':effective_end,'rows':row_count,'rejected_dates':rejected,'updated_at':now(),'status':'partial','completed_datasets':checkpoint.get('completed_datasets',[]) if resumed else []})
     errors=[]
     # Free ex-dividend and capital-reduction reference prices, paid feed optional.
     try:
@@ -184,7 +186,7 @@ def history(sid, start, end=None, extras=True):
     except Exception:
         errors.append('還原價尚未取得；回測將拒絕未驗證的區間')
         # Preserve raw-loaded checkpoint and stop request fan-out after quota failure.
-        with Session.begin() as s:put(s,'ingest',sid,{'start':start,'end':end,'rows':row_count,'rejected_dates':rejected,'status':'partial','warnings':errors,'completed_datasets':checkpoint.get('completed_datasets',[]) if resumed else [],'updated_at':now()})
+        with Session.begin() as s:put(s,'ingest',sid,{'start':effective_start,'end':effective_end,'rows':row_count,'rejected_dates':rejected,'status':'partial','warnings':errors,'completed_datasets':checkpoint.get('completed_datasets',[]) if resumed else [],'updated_at':now()})
         raise RuntimeError('還原價來源暫時不可用；保留原始資料，稍後續跑')
     completed=checkpoint.get('completed_datasets',[]) if resumed else []
     if extras and sid!='TAIEX':
@@ -196,12 +198,12 @@ def history(sid, start, end=None, extras=True):
                     # Whole provider response retained to audit exact published field names.
                     put(s,kind,sid,{'rows':data,'fetched_at':now()},end)
                 completed.append(dataset)
-                with Session.begin() as s:put(s,'ingest',sid,{'start':start,'end':end,'rows':row_count,'rejected_dates':rejected,'status':'partial','completed_datasets':completed,'updated_at':now()})
+                with Session.begin() as s:put(s,'ingest',sid,{'start':effective_start,'end':effective_end,'rows':row_count,'rejected_dates':rejected,'status':'partial','completed_datasets':completed,'updated_at':now()})
             except Exception:
                 errors.append(dataset+' 尚未取得')
                 break
     with Session.begin() as s:
-        put(s,'ingest',sid,{'start':start,'end':end,'rows':row_count,'rejected_dates':rejected,'updated_at':now(),'status':'partial' if errors else 'ok','warnings':errors,'completed_datasets':completed,'extras_completed':not errors and (extras or sid=='TAIEX')})
+        put(s,'ingest',sid,{'start':effective_start,'end':effective_end,'rows':row_count,'rejected_dates':rejected,'updated_at':now(),'status':'partial' if errors else 'ok','warnings':errors,'completed_datasets':completed,'extras_completed':not errors and (extras or sid=='TAIEX' or resumed and checkpoint.get('extras_completed',False))})
     if errors:raise RuntimeError('輔助資料尚未齊全；保留進度，稍後續跑')
     return {'stock_id':sid,'rows':row_count,'warnings':errors}
 

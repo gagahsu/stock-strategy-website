@@ -405,7 +405,11 @@ function Scan({ action, busy }: Actions) {
         <Stat
           label="已掃描股票"
           value={money(data?.rows?.length)}
-          note="至少60根日K"
+          note={
+            data?.coverage?.universe_total
+              ? `名單${data.coverage.universe_total}檔（含ETF／歷史代號）；${data.coverage.insufficient_history}檔日K不足`
+              : "至少60根日K"
+          }
         />
         <Stat
           label="濾網候選"
@@ -2106,7 +2110,7 @@ function DataPage({ status, action, busy }: Actions & { status: Data }) {
           <div>
             <h2>全市場10年回補進度</h2>
             <small>
-              逐檔保存；額度或網路失敗等待後續跑。停止不會刪除資料。
+              先補全市場近期行情與還原價供掃描，再補10年歷史與基本面。停止會保留進度。
             </small>
           </div>
           <div className="chips">
@@ -2125,8 +2129,14 @@ function DataPage({ status, action, busy }: Actions & { status: Data }) {
           </div>
         </div>
         <p>
-          {status?.bulk?.status || "尚未開始"} · 完成 {status?.bulk?.done || 0}{" "}
-          / {status?.bulk?.total || status?.stocks || 0} 檔 · 目前{" "}
+          {status?.bulk?.phase === "scan"
+            ? "階段1：近期行情與還原價"
+            : status?.bulk?.phase === "history"
+              ? "階段2：10年歷史與基本面"
+              : "回補"}{" "}
+          · {status?.bulk?.status || "尚未開始"} · 本階段完成{" "}
+          {status?.bulk?.done || 0} /{" "}
+          {status?.bulk?.total || status?.stocks || 0} 檔 · 目前{" "}
           {status?.bulk?.stock_id || "—"}
         </p>
         {status?.bulk?.error && (

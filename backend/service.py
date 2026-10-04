@@ -56,6 +56,7 @@ def scan():
         cfg=settings(s);index=features(bars(s,'TAIEX')); market=market_state(index)
         calendar=set(index.date.tail(cfg['stock_pool']['volume_filter']['lookback_trading_days'])) if len(index) else set()
         ids=[x[0] for x in s.query(Bar.stock_id).group_by(Bar.stock_id).having(func.count(Bar.date)>=60) if x[0]!='TAIEX']
+        universe_total=s.query(Stock).filter(Stock.market.in_(('twse','tpex'))).count()
         for sid in ids:
             try:
                 st=s.get(Stock,sid)
@@ -83,7 +84,7 @@ def scan():
     for row in result:
         if row['return20'] is not None: industries.setdefault(row['industry'],[]).append(row['return20'])
     ranks=sorted([{'industry':key,'return20':sum(vals)/len(vals),'stocks':len(vals)} for key,vals in industries.items()],key=lambda x:x['return20'],reverse=True)
-    payload={'updated_at':now(),'market':market,'rows':result,'industry_ranks':ranks,'errors':errors,'coverage':{'scanned':len(result),'description':'只掃描已有至少60日日K的股票；資料缺漏不視為無訊號。'}}
+    payload={'updated_at':now(),'market':market,'rows':result,'industry_ranks':ranks,'errors':errors,'coverage':{'scanned':len(result),'universe_total':universe_total,'insufficient_history':max(0,universe_total-len(ids)),'description':'股票名單含ETF與歷史代號；只掃描已有至少60日日K的股票，資料不足不視為無訊號。'}}
     with Session.begin() as s:
         put(s,'scan','latest',payload)
         for row in result:
