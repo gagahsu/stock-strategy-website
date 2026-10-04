@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -44,6 +44,8 @@ export default function Chart({
   kind?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [showNames, setShowNames] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   useEffect(() => {
     if (!ref.current || !bars.length) return;
     const chart = createChart(ref.current, {
@@ -171,12 +173,16 @@ export default function Chart({
             position: x.direction === "long" ? "belowBar" : "aboveBar",
             color: x.direction === "long" ? "#d3514d" : "#299477",
             shape: x.direction === "long" ? "arrowUp" : "arrowDown",
-            text: x.name,
+            text: showNames ? x.name : "",
           }) as const,
       ),
     );
-    chart.timeScale().fitContent();
+    if (showAll || bars.length <= 120) chart.timeScale().fitContent();
+    else chart.timeScale().setVisibleLogicalRange({ from: bars.length - 120, to: bars.length + 3 });
     return () => chart.remove();
-  }, [bars, signals, gaps, kind]);
-  return <div ref={ref} className="chart" aria-label="股票K線與均線圖" />;
+  }, [bars, signals, gaps, kind, showNames, showAll]);
+  return <>
+    <div className="row"><label className="checkbox"><input type="checkbox" checked={showNames} onChange={(e) => setShowNames(e.target.checked)} />顯示訊號名稱</label><button onClick={() => setShowAll(!showAll)}>{showAll ? "最近120根K線" : "顯示完整期間"}</button><span className="muted">紅箭頭：多方訊號 · 綠箭頭：空方訊號；可拖曳與縮放</span></div>
+    <div ref={ref} className="chart" aria-label="股票K線與均線圖" />
+  </>;
 }

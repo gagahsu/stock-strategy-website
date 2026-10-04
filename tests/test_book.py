@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import pandas as pd
 import pytest
-from backend.features import features
+from backend.features import features, gaps
 
 
 def test_book_3707_ma5_events_and_price_sum():
@@ -34,3 +34,20 @@ def test_book_3707_ma5_events_and_price_sum():
     assert price_sum==pytest.approx(7.65)
     assert round(price_sum/entries[0]*100,1)==45.9
     assert abs(price_sum/entries[0]-.456)<.004
+
+
+def test_book_1305_gap_four_levels_and_progressive_breaks():
+    fixture=json.loads(Path('tests/fixtures/book_gap_1305.json').read_text(encoding='utf-8'))
+    f=features(pd.DataFrame(fixture['bars']))
+    gap=next(x for x in gaps(f) if x['date']==fixture['gap_date'] and x['direction']=='up')
+    for key,price in fixture['levels'].items():assert gap[key]==pytest.approx(price)
+    indexed=f.set_index('date')
+    for key,date in zip(('upper_high','upper','lower','lower_bottom'),fixture['break_dates']):
+        assert indexed.loc[date].close<gap[key]
+    assert indexed.loc['2012-10-04'].body<-.02 and indexed.loc['2012-10-04'].volume_ratio>1.3
+    # Ordinary filling is known on Sep25; the later large black K upgrades it.
+    before=gaps(f[f.date<='2012-09-24'])
+    ordinary=gaps(f[f.date<='2012-09-25'])
+    assert next(x for x in before if x['date']==fixture['gap_date'])['status']=='未補'
+    assert next(x for x in ordinary if x['date']==fixture['gap_date'])['status']=='假封口'
+    assert gap['status']=='真封口' and gap['filled_date']=='2012-10-04'

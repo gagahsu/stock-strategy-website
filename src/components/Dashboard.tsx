@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Chart from "./Chart";
@@ -313,6 +313,7 @@ function Scan({ action, busy }: Actions) {
     eligibleOnly: false,
     rulePrefix: "",
   });
+  if (!data && !error) return <div className="empty">讀取掃描結果中…</div>;
   const rows = (data?.rows || [])
     .filter(
       (x: Data) =>
@@ -327,9 +328,9 @@ function Scan({ action, busy }: Actions) {
       (x: Data) =>
         (x.change ?? 0) * 100 >= filters.minChange &&
         (x.volume_ratio ?? 0) >= filters.minVolumeRatio &&
-        (!filters.eligibleOnly || x.eligible) &&
+        (!filters.eligibleOnly || (tab === "short" ? x.eligible_short : tab === "long" ? x.eligible_long : x.eligible)) &&
         (!filters.rulePrefix ||
-          x.signals.some((s: Data) => s.id.startsWith(filters.rulePrefix))),
+          x.signals.some((s: Data) => s.id.startsWith(filters.rulePrefix) || filters.rulePrefix.startsWith("L-") && s.id.startsWith("S-" + filters.rulePrefix.slice(2)))),
     );
   return (
     <>
@@ -350,12 +351,12 @@ function Scan({ action, busy }: Actions) {
           note="至少60根日K"
         />
         <Stat
-          label="可交易候選"
+          label="濾網候選"
           value={money(
             data?.rows?.filter((x: Data) => x.eligible && x.signals.length)
               .length,
           )}
-          note="必要濾網全部通過"
+          note="必要濾網通過，人工項仍須核對"
         />
       </div>
       <div className="panel">
@@ -661,6 +662,7 @@ function StockPage({ sid, action, busy }: Actions & { sid: string }) {
       <div className="two-col">
         <div className="panel">
           <h2>六六大順與選股評量</h2>
+          <p className="muted">以日線檢查股票池與每日工作；日週月評量另見下表。</p>
           <Checks rows={data.checks} />
         </div>
         <div>
@@ -758,6 +760,7 @@ function Backtest({ action, busy }: Actions) {
   const rules = useLoad("rules"),
     settings = useLoad("settings"),
     runs = useLoad("backtests");
+  const initializedBroker = useRef(false);
   const [result, setResult] = useState<Data>(null),
     [form, setForm] = useState<Data>({
       stock_ids: "2330,2317,2454",
@@ -772,6 +775,7 @@ function Backtest({ action, busy }: Actions) {
       capital_model: "fixed",
       allocation: 0.7,
       market_filter: true,
+      elimination_filter: true,
       allow_unadjusted: false,
       broker_profile_id: "default",
       slippage: 0.001,
@@ -779,6 +783,14 @@ function Backtest({ action, busy }: Actions) {
       annual_short_borrow_rate: 0.03,
     });
   const set = (k: string, v: Data) => setForm((previous: Data) => ({ ...previous, [k]: v }));
+  useEffect(() => {
+    if (settings.data && !initializedBroker.current) {
+      initializedBroker.current = true;
+      setForm((previous: Data) => ({ ...previous, broker_profile_id: settings.data.backtest.broker_profile_id }));
+    }
+  }, [settings.data]);
+  if (settings.error || rules.error) return <Notice>{settings.error || rules.error}</Notice>;
+  if (!settings.data || !rules.data) return <div className="empty">讀取策略規則與券商設定中…</div>;
   async function run() {
     const resp = await action(() =>
       api("backtests", "POST", {
@@ -1005,6 +1017,7 @@ function Backtest({ action, busy }: Actions) {
             />
             啟用大盤濾網
           </label>
+          <label className="checkbox"><input type="checkbox" checked={form.elimination_filter} onChange={(e) => set("elimination_filter", e.target.checked)} />啟用淘汰法可計算項（未知項須人工核對）</label>
           <label className="checkbox">
             <input
               type="checkbox"
@@ -1182,6 +1195,7 @@ function Backtest({ action, busy }: Actions) {
             <thead>
               <tr>
                 <th>策略</th>
+                <th>策略停損</th>
                 <th>區間</th>
                 <th>報酬</th>
                 <th>回撤</th>
@@ -1194,6 +1208,7 @@ function Backtest({ action, busy }: Actions) {
                   <td>
                     {x.params.exit_mode} · {x.params.rule_ids?.join(",")}
                   </td>
+                  <td>{x.params.stop_method || "fixed"} · {pct(x.params.settings_snapshot?.risk.strategy_stop_ratio)}</td>
                   <td>
                     {x.params.start} — {x.params.end}
                   </td>
@@ -1979,6 +1994,7 @@ function DataPage({ status, action, busy }: Actions & { status: Data }) {
               status.quality.rows.filter(
                 (x: Data) =>
                   x.unverified_bars ||
+                  x.rejected_dates?.length ||
                   x.missing_trading_dates.length ||
                   x.suspicious_moves.length,
               ).length

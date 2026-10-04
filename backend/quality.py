@@ -16,6 +16,8 @@ def audit():
                 if abs(change)>.25: suspicious.append({'date':row.date,'change':change})
             # Missing bars may be suspension, never silently fill with zero.
             value={'id':sid,'rows':len(rows),'first':rows[0].date,'last':rows[-1].date,'missing_trading_dates':missing,'unverified_bars':sum(not x.adjustment_verified for x in rows),'suspicious_moves':suspicious,'warning':'缺交易日可能為停牌或來源缺漏，須核對公告。' if missing or suspicious else None}
+            value['rejected_dates']=get(s,'ingest',sid,default={}).get('rejected_dates',[])
+            if value['rejected_dates']:value['warning']='來源含不合法或非成交行情，已隔離且未填補K線；缺漏須核對。'
             put(s,'quality',sid,value)
             report.append(value)
         put(s,'quality_summary','latest',{'updated_at':now(),'rows':report})

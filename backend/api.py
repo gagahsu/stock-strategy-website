@@ -199,6 +199,7 @@ class BT(BaseModel):
     annual_short_borrow_rate:float=Field(.03,ge=0,le=1)
     allow_unadjusted:bool=False
     market_filter:bool=True
+    elimination_filter:bool=True
     out_of_sample_fraction:float=Field(.3,gt=0,lt=.8)
     @model_validator(mode='after')
     def validate_dates(self):
@@ -213,6 +214,12 @@ class BT(BaseModel):
 
 def backtest_pool(s,ids,start,end):
     metadata={x.id:json.loads(x.payload) for x in s.query(Stock).filter(Stock.id.in_(ids))}
+    for r in s.query(Record).filter(Record.kind=='chips_daily',Record.key.in_(ids)).order_by(Record.date):
+        flow={}
+        for row in json.loads(r.payload).get('rows',[]):
+            day=row.get('date','')
+            if day<=end:flow[day]=flow.get(day,0)+float(row.get('buy',0))-float(row.get('sell',0))
+        metadata.setdefault(r.key,{})['institutional_daily']=flow
     snapshots={(r.key,r.date):json.loads(r.payload) for r in s.query(Record).filter(Record.kind=='restriction_snapshot',Record.key.in_(ids),Record.date>=start,Record.date<=end)}
     return metadata,snapshots
 

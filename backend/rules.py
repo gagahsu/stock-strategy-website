@@ -109,13 +109,14 @@ def detect(f,i=None,params=None,mirror=True):
     bears=[high and black and explosive,black and x.close<x.ma20 and attack,double_top and sell,high and black and explosive,q.volume_ratio>=2 and p.volume_ratio>=2 and x.close<min(q.low,p.low),high and x.upper_shadow>.03 and explosive,high and x.gap_up and black,bool((f.iloc[i-2:i+1].upper_shadow>.02).all()) and high,red_bd and sell,x.high>x.high60 and black and explosive,q.body<0 and p.body>0 and black and below_y,x.gap_down and sell,x.trend=='bear' and p.trend!='bear' and below_y,abc_s and sell,channel_down and sell]
     # The drawings show confirmation after the setup, rather than the setup alone.
     bulls[1]=red and attack and (break_resistance or over_y and hh)
-    bulls[3]=above_gap and buy and bo
+    bulls[3]=above_gap and buy
+    bulls[4]=buy and bool((f.iloc[max(0,i-5):i].body.abs()<=body).all()) and p.close>p.ma20
     bulls[10]=shadow_confirmation
     bulls[16]=island and red
     bulls[17]=channel_up and buy and x.support_line5>p.support_line5
     bears[0]=high and black and explosive or p.close>=p.high60*.95 and p.body<-.035 and p.volume_ratio>=2 and below_y
     bears[1]=black and attack and break_support
-    bears[9]=black and attack and x.high>p.key_black_high if p.key_black_high==p.key_black_high else False
+    bears[9]=black and explosive and x.high>tail.high.max()
     bears[11]=below_gap and sell and bd
     bears[14]=black and attack and break_support and x.support_line5<p.support_line5
     m=[up and explosive and (x.change<=0 or x.upper_shadow>.03),down and explosive and (x.change>=0 or x.lower_shadow>.03),up and explosive and lh,down and explosive and hl,up and p.volume_ratio>=2 and over_y,down and p.volume_ratio>=2 and below_y,x.trend=='bear' and p.trend!='bear',x.trend=='bull' and p.trend!='bull',q.body<-.02 and abs(p.body)<.01 and red or q.body>.02 and abs(p.body)<.01 and black,q.body>.02 and p.body>0 and black and x.close<q.low or q.body<-.02 and p.body<0 and red and x.close>q.high,high and explosive and not bo,narrow and (bo or bd)]
@@ -197,8 +198,10 @@ def checks(f,stock,settings,market=None,asof=None,direction=None):
     add('指標',bool(x.k>x.d if direction=='long' else x.k<x.d),'KD多空配合')
     add('大盤濾網',market.get('direction')==('bull' if direction=='long' else 'bear') if market else None,'大盤月線方向配合',True)
     if direction=='short': add('券源／停券',md.get('can_short'), '須取得歷史券源與停券資訊；未確認僅作研究警示',True)
-    elimination=[('没走出底部',x.close>x.ma20),('重壓不過',not(x.close<x.ma5 and x.volume_ratio>=2)),('趨勢不明',x.trend!='range'),('没有量能',x.volume_ratio>=.5),('漲幅達1倍',x.rise_from_bottom<1),('遇壓大量長黑',not(x.body<-.035 and x.volume_ratio>=2)),('背離加頭頭低',not((x.macd_divergence or x.kd_divergence) and x.lower_high5)),('法人連續賣超',None),('爆量不漲',not(x.volume_ratio>=2 and x.change<=0)),('看不懂的股票',None),('無技術面',bool(x.bull3))]
-    for name,passed in elimination: add('淘汰法：'+name,clean(passed),'未知項需人工確認' if passed is None else '依數值條件判斷')
+    side=1 if direction=='long' else -1
+    eliminated_flow=md.get('institutional_selling' if side==1 else 'institutional_buying')
+    elimination=[('沒走出底部／頭部',side*(x.close-x.ma20)>0),('支阻不過',not(side*(x.close-x.ma5)<0 and x.volume_ratio>=2)),('趨勢不明',x.trend!='range'),('沒有量能',x.volume_ratio>=.5),('波段幅度達1倍',x.rise_from_bottom<1 if side==1 else x.high60/x.close-1<1),('遇壓大量反向K',not(side*x.body<-.035 and x.volume_ratio>=2)),('背離加轉折轉弱',not((x.macd_divergence or x.kd_divergence) and (x.lower_high5 if side==1 else x.higher_low5))),('法人連續反向買賣',not eliminated_flow if eliminated_flow is not None else None),('爆量不漲／跌',not(x.volume_ratio>=2 and side*x.change<=0)),('看不懂的股票',None),('無技術面',bool(x.bull3 if side==1 else x.bear3))]
+    for name,passed in elimination: add('淘汰法：'+name,clean(passed),'未知項需人工確認' if passed is None else '依數值條件判斷；空方採鏡像',passed is not None)
     return clean(rows)
 
 def exit_signal(f,i,position,settings):

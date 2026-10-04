@@ -78,36 +78,41 @@ def features(raw, params=None):
     f['hidden_gap_down'] = (pd.concat([o,c],axis=1).max(axis=1) < pd.concat([o,c],axis=1).min(axis=1).shift(1)) & ~f.gap_down
     f.loc[action, ['hidden_gap_up', 'hidden_gap_down']] = False
     for n in (5,10,20):
-        highs, lows, group, side = [], [], [], None
+        highs, lows, side = [], [], None
         ph, pl, hh, hl, lh, ll = [], [], [], [], [], []
         phi,pli,supports,resistances=[],[],[],[]
         high_points,low_points=[],[]
-        for i, row in f.iterrows():
-            ma = row[f'ma{n}']
-            if pd.isna(ma):
+        group_high=group_low=np.nan;high_index=low_index=0
+        close_values=c.to_numpy();high_values=h.to_numpy();low_values=l.to_numpy()
+        def line(points,i):
+            if len(points)<2 or points[-1][0]==points[-2][0]:return np.nan
+            (a,pa),(b,pb)=points[-2:]
+            return pb+(pb-pa)*(i-b)/(b-a)
+        for i, ma in enumerate(f[f'ma{n}'].to_numpy()):
+            if np.isnan(ma):
                 ph.append(np.nan); pl.append(np.nan); hh.append(False); hl.append(False); lh.append(False); ll.append(False)
                 phi.append(np.nan);pli.append(np.nan);supports.append(np.nan);resistances.append(np.nan)
                 continue
-            new_side = 1 if row.close >= ma else -1
-            group.append(i)
+            new_side = 1 if close_values[i] >= ma else -1
+            if side is None:
+                group_high,group_low=high_values[i],low_values[i];high_index=low_index=i
+            else:
+                if high_values[i]>group_high:group_high=high_values[i];high_index=i
+                if low_values[i]<group_low:group_low=low_values[i];low_index=i
             if side is not None and side != new_side:
                 if side == 1:
-                    highs.append(float(f.loc[group, 'high'].max()))
-                    high_points.append((int(f.loc[group,'high'].idxmax()),highs[-1]))
+                    highs.append(float(group_high))
+                    high_points.append((high_index,highs[-1]))
                 else:
-                    lows.append(float(f.loc[group, 'low'].min()))
-                    low_points.append((int(f.loc[group,'low'].idxmin()),lows[-1]))
-                group = [i]
+                    lows.append(float(group_low))
+                    low_points.append((low_index,lows[-1]))
+                group_high,group_low=high_values[i],low_values[i];high_index=low_index=i
             side = new_side
             ph.append(highs[-1] if highs else np.nan); pl.append(lows[-1] if lows else np.nan)
             hh.append(len(highs)>1 and highs[-1]>highs[-2]); lh.append(len(highs)>1 and highs[-1]<highs[-2])
             hl.append(len(lows)>1 and lows[-1]>lows[-2]); ll.append(len(lows)>1 and lows[-1]<lows[-2])
             phi.append(high_points[-1][0] if high_points else np.nan);pli.append(low_points[-1][0] if low_points else np.nan)
-            def line(points):
-                if len(points)<2 or points[-1][0]==points[-2][0]:return np.nan
-                (a,pa),(b,pb)=points[-2:]
-                return pb+(pb-pa)*(i-b)/(b-a)
-            supports.append(line(low_points));resistances.append(line(high_points))
+            supports.append(line(low_points,i));resistances.append(line(high_points,i))
         for name, values in [('pivot_high',ph),('pivot_low',pl),('higher_high',hh),('higher_low',hl),('lower_high',lh),('lower_low',ll)]:
             f[f'{name}{n}'] = values
         for name,values in [('pivot_high_index',phi),('pivot_low_index',pli),('support_line',supports),('resistance_line',resistances)]:f[f'{name}{n}']=values

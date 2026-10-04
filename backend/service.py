@@ -13,20 +13,25 @@ def stock_data(s,sid,period='day',end=None):
     if not st: raise ValueError('找不到股票代號')
     raw=bars(s,sid,end)
     cfg=settings(s)
-    f=features(raw if period=='day' else aggregate(raw,period),cfg.get('rule_params'))
+    daily=features(raw,cfg.get('rule_params'))
+    f=daily if period=='day' else features(aggregate(raw,period),cfg.get('rule_params'))
     metadata={'id':st.id,'name':st.name,'market':st.market,'industry':st.industry,**json.loads(st.payload)}
     if end and len(f):
         snapshot=get(s,'restriction_snapshot',sid,f.iloc[-1].date,default={})
         metadata.update({key:snapshot.get(key) for key in ('full_delivery','disposition','can_short')})
         metadata['restrictions_date']=snapshot.get('restrictions_date','')
     market=market_state(features(bars(s,'TAIEX',end)))
-    ck=checks(f,metadata,settings(s),market, f.iloc[-1].date if len(f) else None)
-    ck.extend(daily_sop(f,market))
+    ck=checks(daily,metadata,cfg,market, daily.iloc[-1].date if len(daily) else None)
+    ck.extend(daily_sop(daily,market))
     historical=[]
     for i in range(max(20,len(f)-80),len(f)):
         historical.extend(detect(f,i,cfg.get('rule_params')))
     context={kind:records_for(s,kind,sid,end,limit=None) for kind in ('fundamentals','financials','chips_daily','margin_daily')}
     evaluation=assessment(raw,metadata,context,market)
+    for check in ck:
+        if check['name']=='淘汰法：法人連續反向買賣':
+            selling=evaluation['institutional_selling']
+            if len(daily) and daily.iloc[-1].trend!='bear' and selling is not None:check.update(passed=not selling,hard=True,reason='最近3日法人净額，使用當時已公布資料')
     ck.extend(evaluation['commandments'])
     return clean({'stock':metadata,'bars':f.tail(500).to_dict('records'),'signals':detect(f,params=cfg.get('rule_params')),'historical_signals':historical,'checks':ck,'assessment':evaluation,'gaps':gaps(f)[-30:],'market':market,'data_quality':{'rows':len(raw),'first_date':raw.iloc[0].date if len(raw) else None,'last_date':raw.iloc[-1].date if len(raw) else None,'adjustment_verified':bool(len(raw) and raw.adjustment_verified.all()),'warning':'還原價未驗證，圖表使用目前可取得價源。' if len(raw) and not raw.adjustment_verified.all() else None},'context':{k:v[-20:] for k,v in context.items()}})
 
@@ -35,6 +40,14 @@ def records_for(s,kind,key,end=None,limit=20):
     data=json.loads(r.payload).get('rows',[]) if r else []
     if end:data=[x for x in data if x.get('date','9999')<=end]
     return data[-limit:] if limit else data
+
+def institutional_direction(s,sid,f):
+    dates=set(f.date.tail(3))
+    if len(dates)<3:return {}
+    rows=[r for r in records_for(s,'chips_daily',sid,f.iloc[-1].date,limit=None) if r.get('date') in dates]
+    if {r['date'] for r in rows}!=dates:return {}
+    nets=[sum(float(r.get('buy',0))-float(r.get('sell',0)) for r in rows if r['date']==d) for d in dates]
+    return {'institutional_selling':all(v<0 for v in nets),'institutional_buying':all(v>0 for v in nets)}
 
 def scan():
     result=[]; errors=[]
@@ -48,6 +61,7 @@ def scan():
                 if not st: continue
                 f=features(bars(s,sid),cfg.get('rule_params')); x=f.iloc[-1]
                 metadata=json.loads(st.payload)
+                metadata.update(institutional_direction(s,sid,f))
                 ck=checks(f,metadata,cfg,market,x.date)
                 ck.append({'name':'日均量窗口完整','passed':bool(calendar and calendar.issubset(set(f.date))),'reason':'大盤交易日缺漏不能當作零成交量或壓縮掉','hard':True})
                 signals=detect(f,params=cfg.get('rule_params'))

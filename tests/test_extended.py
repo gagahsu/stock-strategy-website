@@ -100,3 +100,29 @@ def test_weekly_pressure_uses_completed_weeks_only():
     prefix=features(raw.iloc[:123]);full=features(raw)
     for col in ('weekly_resistance','weekly_support','weekly_ma20','weekly_pressure_up','weekly_pressure_down'):
         assert prefix[col].tolist()==full[col].iloc[:123].tolist() if prefix[col].dtype==bool else prefix[col].equals(full[col].iloc[:123])
+
+
+def test_elimination_filter_rejects_known_failure_without_inventing_manual_answers(monkeypatch):
+    raw=frame(70)
+    monkeypatch.setattr('backend.backtest.detect',lambda f,i,*args:[{'id':'L-ENTRY-4','direction':'long'}] if i==60 else [])
+    params={'start':raw.iloc[55].date,'end':raw.iloc[-1].date,'market_filter':False}
+    metadata={'2330':{'institutional_daily':{raw.iloc[i].date:-100 for i in (58,59,60)}}}
+    assert simulate({'2330':raw},cfg(),params,metadata=metadata)['summary']['open_positions']==1
+    assert simulate({'2330':raw},cfg(),{**params,'elimination_filter':True},metadata=metadata)['summary']['open_positions']==0
+
+
+def test_chart_period_does_not_turn_daily_volume_filter_into_weekly_volume(monkeypatch):
+    from backend import service
+    raw=frame(150)
+    class StockStub:
+        id='TEST';name='測試';market='twse';industry='其他';payload='{}'
+    class SessionStub:
+        def get(self,*args):return StockStub()
+    monkeypatch.setattr(service,'bars',lambda *args:raw)
+    monkeypatch.setattr(service,'settings',lambda *args:cfg())
+    monkeypatch.setattr(service,'records_for',lambda *args,**kwargs:[])
+    day=service.stock_data(SessionStub(),'TEST','day')
+    week=service.stock_data(SessionStub(),'TEST','week')
+    month=service.stock_data(SessionStub(),'TEST','month')
+    assert len(day['bars'])>len(week['bars'])>len(month['bars'])
+    assert day['checks']==week['checks']==month['checks']

@@ -40,3 +40,22 @@ def test_price_only_backfill_does_not_claim_auxiliary_completion(tmp_path,monkey
     monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:None)
     ingest.history('TEST','2024-01-01','2024-01-03',extras=False)
     with isolated() as s:assert get(s,'ingest','TEST')['extras_completed'] is False
+
+
+def test_invalid_price_is_quarantined_without_rolling_back_valid_history(tmp_path,monkeypatch):
+    engine=create_engine('sqlite:///'+str(tmp_path/'invalid.db'))
+    Base.metadata.create_all(engine)
+    isolated=sessionmaker(engine)
+    monkeypatch.setattr(ingest,'Session',isolated)
+    monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:None)
+    rows=[{'date':'2024-01-02','open':10,'max':11,'min':9,'close':10,'Trading_Volume':1000000},
+          {'date':'2024-01-03','open':10,'max':9,'min':8,'close':10,'Trading_Volume':1000000},
+          {'date':'2024-01-04','open':10,'max':11,'min':9,'close':10,'Trading_Volume':1000000}]
+    monkeypatch.setattr(ingest,'fin',lambda dataset,*args:rows if dataset=='TaiwanStockPrice' else [])
+    ingest.history('TEST','2024-01-01','2024-01-05')
+    with isolated() as s:
+        assert s.query(Bar).count()==2
+        checkpoint=get(s,'ingest','TEST')
+        assert checkpoint['rows']==2 and checkpoint['extras_completed']
+        assert checkpoint['rejected_dates']==['2024-01-03']
+        assert get(s,'rejected_bar','TEST','2024-01-03')['row']==rows[1]

@@ -2,7 +2,7 @@
 import math
 import pandas as pd
 from .features import clean, features
-from .rules import detect, exit_signal, market_state, initial_stop
+from .rules import detect, exit_signal, market_state, initial_stop, checks
 
 FORMULAS=[{'trades':20,'win_rate':.5,'win':.07,'loss':.05,'book_return':.2},{'trades':20,'win_rate':.6,'win':.07,'loss':.05,'book_return':.44},{'trades':30,'win_rate':.5,'win':.07,'loss':.05,'book_return':.3},{'trades':30,'win_rate':.6,'win':.07,'loss':.05,'book_return':.66},{'trades':12,'win_rate':7/12,'win':.20,'loss':.05,'book_return':1.15}]
 
@@ -155,6 +155,15 @@ def simulate(frames, settings, params, market=None, metadata=None, restrictions=
                 expected_dates=set(market[market.date<=date].date.tail(n))
                 if not expected_dates.issubset(set(df.iloc[:idx+1].date)):continue
             if row.raw_close<settings.get('scanner',{}).get('minimum_price',5): continue
+            if params.get('elimination_filter',False):
+                info=dict((metadata or {}).get(sid,{}))
+                daily_flows=info.get('institutional_daily',{})
+                last_dates=df.iloc[max(0,idx-2):idx+1].date.tolist()
+                if len(last_dates)==3 and all(d in daily_flows for d in last_dates):
+                    nets=[daily_flows[d] for d in last_dates]
+                    info.update(institutional_selling=all(v<0 for v in nets),institutional_buying=all(v>0 for v in nets))
+                candidates=checks(df.iloc[:idx+1],info,settings,asof=date,direction=direction)
+                if any(c['name'].startswith('淘汰法：') and c['passed'] is False for c in candidates):continue
             # Optional market gate applies using only same-date completed index bars.
             if params.get('market_filter',True):
                 regime=market_state(market[market.date<=date]) if market is not None else {'direction':'unknown'}
