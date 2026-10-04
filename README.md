@@ -44,7 +44,9 @@ npm run build
 
 每天本機時間15:30與20:00執行 `StockStrategyDaily`，僅平日；資料、掃描、持股與通知結果持久保存。電腦需要在可執行排程的狀態。GitHub Actions的每日工作另提供部署用範本，預設停用，須設定持久的 `DATABASE_URL` 與 `ENABLE_DAILY_JOB=true` 才執行，避免同時跑兩組排程。
 
-日K使用 [TWSE](https://openapi.twse.com.tw/)、[TPEx](https://www.tpex.org.tw/openapi/)；歷史、法人、融資券、營收及財報使用 [FinMind](https://finmind.github.io/)。還原價使用免費除權息／減資參考價建立因子，不依賴付費 `TaiwanStockPriceAdj`。API失敗保留原始資料與檢查點，背景工作等待10分鐘後重試，操作停止也不刪資料。
+日K使用 [TWSE](https://openapi.twse.com.tw/)、[TPEx](https://www.tpex.org.tw/openapi/)；歷史、法人、融資券、營收及財報使用 [FinMind](https://finmind.github.io/)。還原價使用免費除權息／減資參考價建立因子，不依賴付費 `TaiwanStockPriceAdj`。API失敗保留原始資料與檢查點，FinMind背景工作等待10分鐘後重試，操作停止也不刪資料。
+
+可另執行 `python -m backend.official_history --years 10`，使用交易所公開歷史單日行情先補全市場近370日，再往前補10年日K，不消耗FinMind額度。此程序只新增缺少的原始行情，保留既有價格與還原驗證，不把日K完成冒充為法人、營收、財報或還原價已完成。歷史行情依現行股票代號跨兩市場比對，保留轉板前的行情；ETF依股票池排除。逐市場／交易日檢查點可續跑，空白或日期／欄位不符的回應不標記完成，異常OHLC另行隔離。狀態存於資料庫 `official_bulk/latest`；建立 `data/STOP_OFFICIAL_HISTORY` 可停止，移除後重新執行即續跑。此程序有獨立OS鎖，不會重複啟動。
 
 **程式可續跑不代表全市場10年資料已回補完成。** `/data` 顯示實際完成檔數；`/scan` 只計入至少60日日K的股票，缺資料不能當成沒有訊號。來源日K可能含停牌缺日，未知限制股及不完整均量窗口不納入可交易候選。無完整歷史券源的空方結果僅供研究。
 

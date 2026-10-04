@@ -6,6 +6,25 @@ from backend.db import Base, Bar, get
 from backend import ingest
 
 
+def test_provider_upsert_handles_concurrent_insert_without_resetting_factors(tmp_path,monkeypatch):
+    engine=create_engine('sqlite:///'+str(tmp_path/'concurrent.db'))
+    Base.metadata.create_all(engine)
+    isolated=sessionmaker(engine)
+    with isolated.begin() as s:
+        original_get=s.get
+        def racing_lookup(entity,key,*args,**kwargs):
+            result=original_get(entity,key,*args,**kwargs)
+            if entity is Bar and result is None:
+                with isolated.begin() as other:
+                    other.add(Bar(stock_id=key[0],date=key[1],open=10,high=12,low=9,close=11,
+                                  volume=1000,factor=.75,adjustment_verified=1))
+            return result
+        monkeypatch.setattr(s,'get',racing_lookup)
+        assert ingest.save_bar(s,'2330',{'date':'2026-10-02','open':20,'high':22,'low':19,'close':21,'volume':2000})
+        bar=original_get(Bar,('2330','2026-10-02'))
+        assert (bar.close,bar.volume,bar.factor,bar.adjustment_verified)==(21,2000,.75,1)
+
+
 def test_recent_pass_preserves_completed_ten_year_checkpoint(tmp_path,monkeypatch):
     from backend.db import put
     engine=create_engine('sqlite:///'+str(tmp_path/'resume.db'))

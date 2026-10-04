@@ -52,17 +52,32 @@ def iso(value):
         return f'{text[:4]}-{text[4:6]}-{text[6:8]}'
     raise ValueError('Invalid provider date')
 
-def save_bar(s, stock_id, row):
+def bar_values(stock_id, row):
     vals = [num(row[x]) for x in ('open','high','low','close','volume')]
     if any(x is None or not math.isfinite(x) for x in vals) or min(vals[:4])<=0 or vals[4]<0:
-        return False
+        return None
     o,h,l,c,v = vals
     if h < max(o,c,l) or l > min(o,c,h):
         raise ValueError(f'OHLC invalid: {stock_id} {row["date"]}')
+    return {'open':o,'high':h,'low':l,'close':c,'volume':v}
+
+def save_bar(s, stock_id, row):
+    values=bar_values(stock_id,row)
+    if values is None:return False
     old = s.get(Bar, (stock_id,row['date']))
-    s.merge(Bar(stock_id=stock_id,date=row['date'],open=o,high=h,low=l,close=c,volume=v,
-                factor=old.factor if old else 1., adjustment_verified=old.adjustment_verified if old else 0,
-                source=row.get('source','FinMind')))
+    source=row.get('source','FinMind')
+    if old:
+        for key,value in {**values,'source':source}.items():setattr(old,key,value)
+    else:
+        if s.get_bind().dialect.name=='sqlite':
+            from sqlalchemy.dialects.sqlite import insert
+        else:
+            from sqlalchemy.dialects.postgresql import insert
+        statement=insert(Bar).values(stock_id=stock_id,date=row['date'],**values,
+                                    factor=1.,adjustment_verified=0,source=source)
+        # A parallel provider may create this row after the lookup. Keep its factors.
+        s.execute(statement.on_conflict_do_update(index_elements=['stock_id','date'],
+                    set_={**values,'source':source}))
     return True
 
 def stock_list():
