@@ -4,6 +4,8 @@
 > 決策：台股上市櫃｜免費資料｜多空都做｜Python 引擎 + Next.js 前端
 > 功能：每日選股掃描、個股診斷、策略回測、持股追蹤與出場提醒
 
+> 第一版實作決策（2026-10-04）：依個人使用需求，本機Next.js + FastAPI + SQLite為預設，Windows工作排程執行平日15:30／20:00。下方雲端架構保留為後續選項，目前未部署Vercel／Railway／Neon。詳細完成項、驗收及未完成項見 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)。LINE實機驗收由使用者選擇稍後自行設定憑證。
+
 ---
 
 ## 1. 系統架構

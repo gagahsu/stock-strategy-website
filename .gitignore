@@ -18,3 +18,5 @@ data/
 *.log
 .DS_Store
 Thumbs.db
+*.tsbuildinfo
+.env.local

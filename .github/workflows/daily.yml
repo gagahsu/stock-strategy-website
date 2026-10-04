@@ -1,0 +1,27 @@
+name: Daily data and alerts
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 7 * * 1-5'
+    - cron: '0 12 * * 1-5'
+concurrency:
+  group: daily-ingestion
+  cancel-in-progress: false
+jobs:
+  update:
+    if: vars.ENABLE_DAILY_JOB == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+      LINE_RECIPIENT_USER_ID: ${{ secrets.LINE_RECIPIENT_USER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: test -n "$DATABASE_URL"
+      - run: pip install -r requirements.txt
+      - run: python -m backend.daily_job

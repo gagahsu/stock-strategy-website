@@ -1,0 +1,238 @@
+import argparse
+import json
+import os
+import re
+import time
+import csv
+from io import StringIO
+from datetime import date, timedelta
+import httpx
+from .db import Session, Stock, Bar, Record, put, get, now
+
+FIN = 'https://api.finmindtrade.com/api/v4/data'
+TWSE = 'https://openapi.twse.com.tw/v1'
+TPEX = 'https://www.tpex.org.tw/openapi/v1'
+
+def fetch(url, params=None):
+    for attempt in range(4):
+        try:
+            headers={'Accept':'text/csv'} if 'tpex.org.tw/openapi/v1' in url else {'Accept':'application/json'}
+            r = httpx.get(url, params=params, headers=headers, timeout=45, follow_redirects=True)
+            r.raise_for_status()
+            data = list(csv.DictReader(StringIO(r.text.lstrip('\ufeff')))) if 'text/csv' in r.headers.get('content-type','') else r.json()
+            if isinstance(data, dict) and data.get('status',200) != 200:
+                raise ValueError(f"Data provider status {data.get('status')}: {data.get('msg','request failed')}")
+            return data
+        except (httpx.HTTPError, ValueError) as exc:
+            if attempt == 3:
+                status=f' HTTP {exc.response.status_code}' if isinstance(exc,httpx.HTTPStatusError) else ''
+                raise RuntimeError(f'資料來源暫時不可用：{url.split("?")[0]} ({type(exc).__name__}{status})') from exc
+            time.sleep(min(2 ** attempt, 8))
+
+def fin(dataset, stock_id=None, start=None, end=None):
+    params = {'dataset':dataset}
+    for key, value in [('data_id',stock_id),('start_date',start),('end_date',end),('token',os.getenv('FINMIND_TOKEN'))]:
+        if value:
+            params[key] = value
+    return fetch(FIN, params).get('data', [])
+
+def num(value):
+    try:
+        return float(str(value).replace(',','').replace(' ',''))
+    except (ValueError,TypeError):
+        return None
+
+def iso(value):
+    text = re.sub(r'[^0-9]', '', str(value))
+    if len(text)==7:
+        return f'{int(text[:3])+1911}-{text[3:5]}-{text[5:7]}'
+    if len(text)==8:
+        return f'{text[:4]}-{text[4:6]}-{text[6:8]}'
+    raise ValueError('Invalid provider date')
+
+def save_bar(s, stock_id, row):
+    vals = [num(row[x]) for x in ('open','high','low','close','volume')]
+    if any(x is None for x in vals) or min(vals[:4])<=0 or vals[4]<0:
+        return False
+    o,h,l,c,v = vals
+    if h < max(o,c,l) or l > min(o,c,h):
+        raise ValueError(f'OHLC invalid: {stock_id} {row["date"]}')
+    old = s.get(Bar, (stock_id,row['date']))
+    s.merge(Bar(stock_id=stock_id,date=row['date'],open=o,high=h,low=l,close=c,volume=v,
+                factor=old.factor if old else 1., adjustment_verified=old.adjustment_verified if old else 0,
+                source=row.get('source','FinMind')))
+    return True
+
+def stock_list():
+    raw = fin('TaiwanStockInfo')
+    latest={}
+    for x in sorted(raw,key=lambda x:x.get('date','')):
+        latest[x['stock_id']]=x
+    rows=list(latest.values())
+    count = 0
+    with Session.begin() as s:
+        for x in rows:
+            market = x.get('type','')
+            if market not in ('twse','tpex'):
+                continue
+            sid = x['stock_id']
+            # Ordinary equities and ETF codes; exclude warrants and bonds.
+            if not (len(sid)==4 and sid.isdigit() or sid.startswith('00') and len(sid)<=6):
+                continue
+            old = s.get(Stock,sid)
+            payload = json.loads(old.payload) if old else {}
+            payload.update({'is_etf':sid.startswith('00'),'is_ky':'KY' in x.get('stock_name','')})
+            s.merge(Stock(id=sid,name=x['stock_name'],market=market,industry=x.get('industry_category','其他'),payload=json.dumps(payload,ensure_ascii=False)))
+            count += 1
+        s.merge(Stock(id='TAIEX',name='加權指數',market='index',industry='指數',payload='{}'))
+        put(s,'ingest','stock_list',{'count':count,'updated_at':now()})
+    return count
+
+
+def company_profiles():
+    report={}
+    for market,url in [('twse',TWSE+'/opendata/t187ap03_L'),('tpex',TPEX+'/mopsfin_t187ap03_O')]:
+        try:
+            rows=fetch(url);count=0
+            with Session.begin() as s:
+                for row in rows:
+                    st=s.get(Stock,str(row.get('公司代號','')))
+                    if not st:continue
+                    capital=num(row.get('實收資本額'))
+                    payload=json.loads(st.payload)
+                    payload.update({'paid_in_capital':capital,'capital_date':iso(row['出表日期']),'company_profile':row})
+                    st.payload=json.dumps(payload,ensure_ascii=False);count+=1
+                put(s,'ingest','profiles_'+market,{'rows':count,'updated_at':now()})
+            report[market]=count
+        except Exception as exc:report[market]=str(exc)
+    return report
+
+def restrictions():
+    report = {}
+    for market, base, altered, punish in [('twse',TWSE,'/exchangeReport/TWT85U','/announcement/punish'),('tpex',TPEX,'/tpex_cmode','/tpex_disposal_information')]:
+        try:
+            a,p = fetch(base+altered),fetch(base+punish)
+            today = date.today().isoformat()
+            with Session.begin() as s:
+                changed = {str(x.get('Code',x.get('SecuritiesCompanyCode',x.get('SecuritiesCode','')))) for x in a if market=='twse' or x.get('AlteredTrading','').strip() not in ('','否','N','0')}
+                disposed = set()
+                for x in p:
+                    period = x.get('DispositionPeriod',x.get('DisposalPeriod',''))
+                    dates = re.findall(r'\d{3,4}/\d{2}/\d{2}',period)
+                    if len(dates)==2 and iso(dates[0]) <= today <= iso(dates[1]):
+                        disposed.add(str(x.get('Code',x.get('SecuritiesCompanyCode',x.get('SecuritiesCode','')))))
+                for st in s.query(Stock).filter_by(market=market):
+                    data = json.loads(st.payload)
+                    data.update({'full_delivery':st.id in changed,'disposition':st.id in disposed,'restrictions_date':today})
+                    st.payload = json.dumps(data,ensure_ascii=False)
+                    put(s,'restriction_snapshot',st.id,data,today)
+                put(s,'ingest','restrictions_'+market,{'updated_at':now(),'date':today,'status':'ok'})
+            report[market]='ok'
+        except Exception as exc:
+            report[market]=str(exc)
+    return report
+
+def daily():
+    report = {}
+    for market, url in [('twse',TWSE+'/exchangeReport/STOCK_DAY_ALL'),('tpex',TPEX+'/tpex_mainboard_daily_close_quotes')]:
+        try:
+            rows = fetch(url)
+            n=0
+            with Session.begin() as s:
+                known = {x.id for x in s.query(Stock).filter_by(market=market)}
+                for x in rows:
+                    sid = x.get('Code',x.get('SecuritiesCompanyCode',x.get('SecuritiesCode','')))
+                    if sid not in known:
+                        continue
+                    row={'date':iso(x['Date']), 'source':market.upper(),'open':x.get('OpeningPrice',x.get('Open')),'high':x.get('HighestPrice',x.get('High')),'low':x.get('LowestPrice',x.get('Low')),'close':x.get('ClosingPrice',x.get('Close')),'volume':x.get('TradeVolume',x.get('TradingShares'))}
+                    n += save_bar(s,sid,row)
+                put(s,'ingest','daily_'+market,{'rows':n,'updated_at':now()})
+            report[market]=n
+        except Exception as exc:
+            report[market]=str(exc)
+    return report
+
+def history(sid, start, end=None, extras=True):
+    end=end or date.today().isoformat()
+    fid = 'TAIEX' if sid=='TAIEX' else sid
+    with Session() as s: checkpoint=get(s,'ingest',sid,default={})
+    resumed=checkpoint.get('status') in ('partial','ok') and checkpoint.get('start','9999')<=start and checkpoint.get('end','')>=end
+    rows=[] if resumed else fin('TaiwanStockPrice',fid,start,end)
+    with Session.begin() as s:
+        for x in rows:
+            save_bar(s,sid,{'date':x['date'],'open':x['open'],'high':x['max'],'low':x['min'],'close':x['close'],'volume':x['Trading_Volume']})
+        row_count=checkpoint.get('rows',0) if resumed else len(rows)
+        put(s,'ingest',sid,{'start':start,'end':end,'rows':row_count,'updated_at':now(),'status':'partial','completed_datasets':checkpoint.get('completed_datasets',[]) if resumed else []})
+    errors=[]
+    # Free ex-dividend and capital-reduction reference prices, paid feed optional.
+    try:
+        from .adjustments import rebuild
+        with Session() as s:
+            first=s.query(Bar).filter_by(stock_id=sid).order_by(Bar.date).first()
+            adjustment_start=first.date if first else start
+        rebuild(sid,adjustment_start,end)
+    except Exception:
+        errors.append('還原價尚未取得；回測將拒絕未驗證的區間')
+        # Preserve raw-loaded checkpoint and stop request fan-out after quota failure.
+        with Session.begin() as s:put(s,'ingest',sid,{'start':start,'end':end,'rows':row_count,'status':'partial','warnings':errors,'completed_datasets':checkpoint.get('completed_datasets',[]) if resumed else [],'updated_at':now()})
+        raise RuntimeError('還原價來源暫時不可用；保留原始資料，稍後續跑')
+    completed=checkpoint.get('completed_datasets',[]) if resumed else []
+    if extras and sid!='TAIEX':
+        for dataset, kind in [('TaiwanStockInstitutionalInvestorsBuySell','chips_daily'),('TaiwanStockMarginPurchaseShortSale','margin_daily'),('TaiwanStockMonthRevenue','fundamentals'),('TaiwanStockFinancialStatements','financials')]:
+            if dataset in completed:continue
+            try:
+                data=fin(dataset,sid,start,end)
+                with Session.begin() as s:
+                    # Whole provider response retained to audit exact published field names.
+                    put(s,kind,sid,{'rows':data,'fetched_at':now()},end)
+                completed.append(dataset)
+                with Session.begin() as s:put(s,'ingest',sid,{'start':start,'end':end,'rows':row_count,'status':'partial','completed_datasets':completed,'updated_at':now()})
+            except Exception:
+                errors.append(dataset+' 尚未取得')
+                break
+    with Session.begin() as s:
+        put(s,'ingest',sid,{'start':start,'end':end,'rows':row_count,'updated_at':now(),'status':'partial' if errors else 'ok','warnings':errors,'completed_datasets':completed,'extras_completed':not errors and (extras or sid=='TAIEX')})
+    if errors:raise RuntimeError('輔助資料尚未齊全；保留進度，稍後續跑')
+    return {'stock_id':sid,'rows':row_count,'warnings':errors}
+
+def backfill(ids=None, years=10, extras=True):
+    start=(date.today()-timedelta(days=365*years+3)).isoformat()
+    with Session() as s:
+        ids=ids or [x.id for x in s.query(Stock).order_by(Stock.id)]
+    outcomes=[]
+    for sid in ids:
+        with Session() as s:
+            checkpoint=get(s,'ingest',sid,default={})
+        # Re-fetch entire interval when adjustment baseline changes; raw prices upsert.
+        if checkpoint.get('status')=='ok' and (not extras or checkpoint.get('extras_completed')) and checkpoint.get('end')==date.today().isoformat() and checkpoint.get('start','9999')<=start:
+            continue
+        try:
+            item=history(sid,start,extras=extras)
+        except Exception as exc:
+            item={'stock_id':sid,'error':str(exc)}
+            # Quota/network failures must not fan out thousands of failing calls.
+            outcomes.append(item)
+            break
+        outcomes.append(item)
+        print(json.dumps(item,ensure_ascii=False),flush=True)
+        time.sleep(float(os.getenv('DATA_REQUEST_INTERVAL','1')))
+    return outcomes
+
+def main():
+    p=argparse.ArgumentParser()
+    p.add_argument('command',choices=['list','daily','backfill','update'])
+    p.add_argument('--stocks',default='')
+    p.add_argument('--years',type=int,default=10)
+    p.add_argument('--no-extras',action='store_true')
+    args=p.parse_args()
+    if args.command in ('list','update'):
+        print('stocks',stock_list())
+        print('restrictions',restrictions())
+        print('company_profiles',company_profiles())
+    if args.command in ('daily','update'):
+        print('daily',daily())
+    if args.command in ('backfill','update'):
+        backfill(args.stocks.split(',') if args.stocks else None,args.years,not args.no_extras)
+
+if __name__=='__main__':
+    main()
