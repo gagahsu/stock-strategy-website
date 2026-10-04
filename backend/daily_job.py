@@ -1,17 +1,22 @@
 """Durable daily job for a local scheduler or hosted runner with persistent DB."""
 import json
 from datetime import date, timedelta
-from .db import Session, Stock, Bar, Record, records, get, put, now
+from .db import Session, Stock, Bar, Record, records, get, put, now, settings
 from .ingest import stock_list, restrictions, daily, history, company_profiles
 from .service import scan, review_positions
 from .notifications import dispatch
 from .quality import audit
+from .universe import refresh_current_universe,is_etf
 
 def run():
     if date.today().weekday()>=5: return {'status':'weekend'}
     stock_list(); report={'restrictions':restrictions(),'daily':daily(),'company_profiles':company_profiles()}
+    try:report['current_universe']=refresh_current_universe()
+    except Exception as exc:report['current_universe_error']=type(exc).__name__
     with Session() as s:
         ids=sorted({'TAIEX'} | {x['stock_id'] for x in records(s,'position')} | {x['key'] for x in records(s,'watchlist')})
+        if settings(s)['stock_pool'].get('exclude_etf'):
+            ids=[sid for sid in ids if sid=='TAIEX' or (st:=s.get(Stock,sid)) and not is_etf(st)]
     # Focus expensive history/action repair on index and actively followed stocks.
     # Official daily endpoints supply whole-market raw bars; do not re-download 10y daily.
     for sid in ids:

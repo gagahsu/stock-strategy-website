@@ -4,7 +4,8 @@ import json
 import time
 from datetime import date, timedelta
 from pathlib import Path
-from .db import Session, Stock, Bar, ROOT, put, get, now
+from .db import Session, Stock, Bar, ROOT, put, get, now, settings
+from .universe import pool_stocks
 from .ingest import history
 from .quality import audit
 
@@ -49,7 +50,7 @@ def run(years=10,limit=None):
         handle.close();raise RuntimeError('已有批次回補執行中')
     start=(date.today()-timedelta(days=365*years+3)).isoformat()
     with Session() as s:
-        stocks=[x for x in s.query(Stock) if x.market in ('twse','tpex','index')]
+        stocks=pool_stocks(s,settings(s),include_index=True)
         ids=[x.id for x in sorted(stocks,key=lambda x:(0 if x.id=='TAIEX' else 2 if x.id.startswith('00') else 1,x.id))]
         latest_market_day=s.query(Bar).filter_by(stock_id='TAIEX').order_by(Bar.date.desc()).first()
         required_end=latest_market_day.date if latest_market_day else date.today().isoformat()

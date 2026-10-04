@@ -2,7 +2,10 @@
   "currency": "TWD",
   "usage": "personal",
   "market": "TWSE_TPEX",
-  "directions": ["long", "short"],
+  "directions": [
+    "long",
+    "short"
+  ],
   "target_management": {
     "stage": "beginner",
     "monthly_target_return": 0.02
@@ -29,7 +32,7 @@
   "stock_pool": {
     "exclude_full_delivery": true,
     "exclude_disposition": true,
-    "exclude_etf": false,
+    "exclude_etf": true,
     "exclude_ky": false,
     "volume_filter": {
       "method": "average_daily_volume",
@@ -44,7 +47,10 @@
     "provider": "line_messaging_api",
     "enabled": false
   },
-  "scanner": { "minimum_price": 5, "max_allocation": 0.9 },
+  "scanner": {
+    "minimum_price": 5,
+    "max_allocation": 0.9
+  },
   "rule_params": {
     "body_threshold": 0.02,
     "attack_volume_ratio": 1.3,

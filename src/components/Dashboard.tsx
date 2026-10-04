@@ -407,7 +407,7 @@ function Scan({ action, busy }: Actions) {
           value={money(data?.rows?.length)}
           note={
             data?.coverage?.universe_total
-              ? `名單${data.coverage.universe_total}檔（含ETF／歷史代號）；${data.coverage.insufficient_history}檔日K不足`
+              ? `名單${data.coverage.universe_total}檔${data.coverage.current_universe && data.coverage.exclude_etf ? "（現行上市櫃股票；不含ETF）" : data.coverage.exclude_etf ? "（已排除ETF；含歷史代號）" : "（含ETF／歷史代號）"}；${data.coverage.insufficient_history}檔日K不足`
               : "至少60根日K"
           }
         />

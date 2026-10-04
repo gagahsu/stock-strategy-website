@@ -8,6 +8,7 @@ from .rules import detect, checks, market_state, exit_signal
 from .sop import daily_sop
 from .assessment import assessment
 from .availability import known_as_of
+from .universe import pool_stocks, is_etf
 
 def stock_data(s,sid,period='day',end=None):
     st=s.get(Stock,sid)
@@ -55,8 +56,10 @@ def scan():
     with Session() as s:
         cfg=settings(s);index=features(bars(s,'TAIEX')); market=market_state(index)
         calendar=set(index.date.tail(cfg['stock_pool']['volume_filter']['lookback_trading_days'])) if len(index) else set()
-        ids=[x[0] for x in s.query(Bar.stock_id).group_by(Bar.stock_id).having(func.count(Bar.date)>=60) if x[0]!='TAIEX']
-        universe_total=s.query(Stock).filter(Stock.market.in_(('twse','tpex'))).count()
+        universe_ids={x.id for x in pool_stocks(s,cfg)}
+        ids=[x[0] for x in s.query(Bar.stock_id).group_by(Bar.stock_id).having(func.count(Bar.date)>=60) if x[0] in universe_ids]
+        universe_total=len(universe_ids)
+        current_universe=bool(get(s,'current_universe','twse') and get(s,'current_universe','tpex'))
         for sid in ids:
             try:
                 st=s.get(Stock,sid)
@@ -84,7 +87,7 @@ def scan():
     for row in result:
         if row['return20'] is not None: industries.setdefault(row['industry'],[]).append(row['return20'])
     ranks=sorted([{'industry':key,'return20':sum(vals)/len(vals),'stocks':len(vals)} for key,vals in industries.items()],key=lambda x:x['return20'],reverse=True)
-    payload={'updated_at':now(),'market':market,'rows':result,'industry_ranks':ranks,'errors':errors,'coverage':{'scanned':len(result),'universe_total':universe_total,'insufficient_history':max(0,universe_total-len(ids)),'description':'股票名單含ETF與歷史代號；只掃描已有至少60日日K的股票，資料不足不視為無訊號。'}}
+    payload={'updated_at':now(),'market':market,'rows':result,'industry_ranks':ranks,'errors':errors,'coverage':{'scanned':len(result),'exclude_etf':cfg['stock_pool'].get('exclude_etf',False),'current_universe':current_universe,'universe_total':universe_total,'insufficient_history':max(0,universe_total-len(ids)),'description':'依目前股票池範圍，只掃描已有至少60日日K的股票，資料不足不視為無訊號。'}}
     with Session.begin() as s:
         put(s,'scan','latest',payload)
         for row in result:
@@ -102,8 +105,10 @@ def watchlist(s):
     latest=get(s,'scan','latest',default={'rows':[]})
     lookup={r['id']:r for r in latest['rows']}
     rows=[]
+    cfg=settings(s)
     for record in records(s,'watchlist'):
         sid=record['key']; st=s.get(Stock,sid); row=lookup.get(sid,{})
+        if st and cfg['stock_pool'].get('exclude_etf') and is_etf(st):continue
         rows.append({**record,'name':st.name if st else sid,'scan':row})
     return sorted(rows,key=lambda x:x['scan'].get('return20') or -999,reverse=True)
 

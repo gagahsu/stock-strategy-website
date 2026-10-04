@@ -2,6 +2,8 @@
 
 個人用的收盤後研究工具：Python / FastAPI 策略引擎、Next.js 網站、SQLite 本機持久化。設定 `DATABASE_URL` 可改用 PostgreSQL；第一版不用申請雲端服務。
 
+股票池預設排除ETF，掃描及回補採交易所現行上市櫃股票名單（包含創新板與臺灣存託憑證）。舊股票與ETF的既有行情保留於資料庫，但不納入此股票池。
+
 ## 使用
 
 Windows PowerShell，於專案目錄執行：

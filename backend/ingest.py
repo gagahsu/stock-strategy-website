@@ -141,7 +141,9 @@ def daily():
             rows = fetch(url)
             n=0
             with Session.begin() as s:
-                known = {x.id for x in s.query(Stock).filter_by(market=market)}
+                from .universe import pool_stocks
+                from .db import settings
+                known = {x.id for x in pool_stocks(s,settings(s)) if x.market==market}
                 for x in rows:
                     sid = x.get('Code',x.get('SecuritiesCompanyCode',x.get('SecuritiesCode','')))
                     if sid not in known:
