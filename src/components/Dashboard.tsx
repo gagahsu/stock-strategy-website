@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Chart from "./Chart";
 import ScanFilters from "./ScanFilters";
+import OperationTour from "./OperationTour";
 
 type Data = any;
 const links = [
@@ -258,39 +259,46 @@ export default function Dashboard() {
               )?.[2] || links[0][2]}
             </p>
           </div>
-          <form
-            className="search"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (search.trim())
-                location.href = "/stock/" + encodeURIComponent(search.trim());
-            }}
-          >
-            <input
-              aria-label="搜尋股票代號"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="輸入股票代號，例如 2330"
-            />
-            <button aria-label="查詢股票">
-              <svg
-                viewBox="0 0 24 24"
-                width="18"
-                height="18"
-                fill="none"
-                aria-hidden="true"
-              >
-                <circle
-                  cx="10.5"
-                  cy="10.5"
-                  r="6"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                />
-                <path d="m15 15 5 5" stroke="currentColor" strokeWidth="1.8" />
-              </svg>
-            </button>
-          </form>
+          <div className="header-tools">
+            <form
+              className="search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (search.trim())
+                  location.href = "/stock/" + encodeURIComponent(search.trim());
+              }}
+            >
+              <input
+                aria-label="搜尋股票代號"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="輸入股票代號，例如 2330"
+              />
+              <button aria-label="查詢股票">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <circle
+                    cx="10.5"
+                    cy="10.5"
+                    r="6"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                  />
+                  <path
+                    d="m15 15 5 5"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                  />
+                </svg>
+              </button>
+            </form>
+            <OperationTour path={path} />
+          </div>
         </header>
         <div className="topline">
           <span>資料範圍：收盤日K · 上市與上櫃</span>
@@ -305,7 +313,7 @@ export default function Dashboard() {
           </div>
         )}
         {status.error && <Notice>{status.error}</Notice>}
-        <div>
+        <div data-tour="page">
           {(path === "/" || path === "/scan") && (
             <Scan action={action} busy={busy} />
           )}

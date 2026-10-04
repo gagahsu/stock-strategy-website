@@ -7,6 +7,111 @@
   --up: #c43d47;
   --down: #22816a;
 }
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.tour-launch {
+  white-space: nowrap;
+  color: var(--blue);
+  border-color: #c9d3ed;
+}
+.operation-tour {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.operation-tour::backdrop {
+  background: rgb(32 36 45 / 24%);
+}
+.tour-highlight {
+  position: fixed;
+  border: 2px solid var(--blue);
+  border-radius: 8px;
+  pointer-events: none;
+}
+.tour-card {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  width: min(470px, calc(100% - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  padding: 24px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--blue);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgb(32 36 45 / 16%);
+}
+.tour-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.tour-top button {
+  padding: 5px 10px;
+}
+.tour-card h2 {
+  font-size: 21px;
+  margin-bottom: 12px;
+}
+.tour-card p {
+  font-size: 14px;
+  line-height: 1.8;
+  margin-bottom: 22px;
+}
+.tour-progress {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 20px;
+}
+.tour-progress span {
+  flex: 1;
+  height: 3px;
+  background: var(--line);
+}
+.tour-progress .complete {
+  background: var(--blue);
+}
+.tour-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tour-actions button:first-child {
+  margin-right: auto;
+}
+@media (max-width: 760px) {
+  .header-tools {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .header-tools .search {
+    flex: 1 1 100%;
+  }
+  .tour-card {
+    bottom: 16px;
+    right: 16px;
+    padding: 20px;
+  }
+}
 * {
   box-sizing: border-box;
 }
