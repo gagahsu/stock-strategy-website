@@ -1,13 +1,45 @@
 """Restart-safe bulk backfill, throttle and quota cooldown. One provider request at a time."""
 import argparse
 import json
+import os
 import time
+import httpx
+from sqlalchemy.exc import SQLAlchemyError
 from datetime import date, timedelta
 from pathlib import Path
 from .db import Session, Stock, Bar, ROOT, put, get, now, settings
 from .universe import pool_stocks
 from .ingest import history
 from .quality import audit
+
+
+def quota_error(exc):
+    """Recognize wrapped 402 errors without serializing authenticated requests."""
+    seen=set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc,httpx.HTTPStatusError) and exc.response.status_code==402:return True
+        exc=exc.__cause__ or exc.__context__
+    return False
+
+
+def available_quota():
+    token=os.getenv('FINMIND_TOKEN')
+    if not token:return None
+    try:
+        response=httpx.get('https://api.web.finmindtrade.com/v2/user_info',
+            headers={'Authorization':'Bearer '+token},timeout=15)
+        response.raise_for_status()
+        payload=response.json()
+        used,limit=payload.get('user_count'),payload.get('api_request_limit')
+        if type(used) is not int or type(limit) is not int or used<0 or limit<=0:return None
+        with Session.begin() as s:
+            put(s,'finmind_usage','latest',{'user_count':used,'api_request_limit':limit,'checked_at':now(),
+                'source':'https://api.web.finmindtrade.com/v2/user_info'})
+        return max(0,limit-used)
+    except (httpx.HTTPError,ValueError,TypeError,AttributeError,SQLAlchemyError):
+        # Never emit account details or request headers; failed probes retain normal cooldown.
+        return None
 
 def active():
     """Probe the OS lock, not stale database status or a reused process id."""
@@ -78,11 +110,15 @@ def run(years=10,limit=None,scan_every=50):
                     time.sleep(2)
                 except Exception as exc:
                     with Session.begin() as s:put(s,'bulk','latest',{'status':'cooldown','phase':phase,'stock_id':sid,'done':done,'total':len(ids),'error':str(exc),'updated_at':now(),'retry_seconds':600})
-                    for _ in range(60):
+                    limited=quota_error(exc)
+                    for tick in range(60):
                         if (ROOT/'data'/'STOP_BACKFILL').exists():
                             with Session.begin() as s:put(s,'bulk','latest',{'status':'stopped','phase':phase,'done':done,'total':len(ids),'updated_at':now()})
                             handle.close();return
                         time.sleep(10)
+                        if limited and (tick+1)%6==0:
+                            remaining=available_quota()
+                            if remaining is not None and remaining>=10:break
         if (ROOT/'data'/'STOP_BACKFILL').exists():break
         # Refresh at both phase boundaries, including newly downloaded fundamentals.
         from .service import scan
