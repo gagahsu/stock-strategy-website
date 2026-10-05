@@ -38,6 +38,7 @@ def test_daily_official_data_survives_catalog_failure_and_defers_quota_requests(
         return {}
     monkeypatch.setattr(daily_job,'stock_list',catalog)
     monkeypatch.setattr(daily_job,'refresh_current_universe',official_universe)
+    monkeypatch.setattr(daily_job,'official_index',lambda:{'last_date':'2026-10-05'})
     monkeypatch.setattr(daily_job,'daily',prices)
     monkeypatch.setattr(daily_job,'restrictions',lambda:{})
     monkeypatch.setattr(daily_job,'company_profiles',lambda:{})
@@ -48,6 +49,7 @@ def test_daily_official_data_survives_catalog_failure_and_defers_quota_requests(
     monkeypatch.setattr(daily_job,'dispatch',lambda:{'sent':0})
     report=daily_job.run()
     assert report['daily']=={'twse':2} and report['stock_list_error']=='RuntimeError'
+    assert report['official_index']['last_date']=='2026-10-05'
     assert history_ids==(['TAIEX','1101'] if limited else ['TAIEX','1101','2330'])
     if limited:assert report['deferred_history_ids']==['1101','2330']
     else:assert 'deferred_history_ids' not in report

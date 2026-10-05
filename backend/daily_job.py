@@ -8,6 +8,7 @@ from .notifications import dispatch
 from .quality import audit
 from .universe import refresh_current_universe,is_etf
 from .worker import quota_error
+from .official_index import refresh as official_index
 
 def run():
     if date.today().weekday()>=5: return {'status':'weekend'}
@@ -16,6 +17,8 @@ def run():
     except Exception as exc:report['stock_list_error']=type(exc).__name__
     try:report['current_universe']=refresh_current_universe()
     except Exception as exc:report['current_universe_error']=type(exc).__name__
+    try:report['official_index']=official_index()
+    except Exception as exc:report['official_index_error']=type(exc).__name__
     # Public whole-market updates must still run when FinMind's catalog is quota-limited.
     report.update({'restrictions':restrictions(),'daily':daily(),'company_profiles':company_profiles()})
     with Session() as s:
