@@ -203,3 +203,34 @@ def test_quota_failure_does_not_burst_retry_or_leak_token(monkeypatch):
         ingest.fetch(ingest.FIN,{'token':token})
     assert len(calls)==1 and token not in str(error.value)
     assert token not in ''.join(traceback.format_exception(error.value))
+
+
+def test_auxiliary_quota_remains_detectable_and_retry_keeps_completed_datasets(tmp_path,monkeypatch):
+    import traceback
+    from backend.worker import quota_error
+    engine=create_engine('sqlite:///'+str(tmp_path/'auxiliary-quota.db'))
+    Base.metadata.create_all(engine);isolated=sessionmaker(engine)
+    monkeypatch.setattr(ingest,'Session',isolated)
+    monkeypatch.setenv('FINMIND_TOKEN','private-test-token')
+    monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:None)
+    calls=[];limited=[True]
+    def provider(url,**kwargs):
+        params=kwargs['params'];dataset=params['dataset'];calls.append(dataset)
+        if dataset=='TaiwanStockMonthRevenue' and limited[0]:
+            return httpx.Response(402,request=httpx.Request('GET',url,params=params),json={'status':402})
+        return httpx.Response(200,request=httpx.Request('GET',url,params=params),json={'data':[]})
+    monkeypatch.setattr(ingest.httpx,'get',provider)
+    with pytest.raises(RuntimeError,match='輔助資料') as error:
+        ingest.history('TEST','2016-10-04','2026-10-05')
+    assert quota_error(error.value)
+    assert 'private-test-token' not in ''.join(traceback.format_exception(error.value))
+    assert calls==['TaiwanStockPrice','TaiwanStockInstitutionalInvestorsBuySell','TaiwanStockMarginPurchaseShortSale','TaiwanStockMonthRevenue']
+    with isolated() as s:
+        ck=get(s,'ingest','TEST')
+        assert ck['status']=='partial' and not ck['extras_completed']
+        assert len(ck['completed_datasets'])==2
+    limited[0]=False
+    ingest.history('TEST','2016-10-04','2026-10-05')
+    assert calls[-2:]==['TaiwanStockMonthRevenue','TaiwanStockFinancialStatements']
+    assert calls.count('TaiwanStockPrice')==1
+    with isolated() as s:assert get(s,'ingest','TEST')['extras_completed']

@@ -200,6 +200,7 @@ def history(sid, start, end=None, extras=True):
         row_count=checkpoint.get('rows',0) if resumed else s.query(Bar).filter(Bar.stock_id==sid,Bar.date>=effective_start,Bar.date<=effective_end).count()
         put(s,'ingest',sid,{'start':effective_start,'end':effective_end,'rows':row_count,'rejected_dates':rejected,'updated_at':now(),'status':'partial','completed_datasets':completed})
     errors=[]
+    auxiliary_failure=None
     # Free ex-dividend and capital-reduction reference prices, paid feed optional.
     try:
         from .adjustments import rebuild
@@ -232,12 +233,13 @@ def history(sid, start, end=None, extras=True):
                     put(s,kind,sid,{'rows':data,'fetched_at':now(),'source':FIN,'dataset':dataset,'start':effective_start,'end':effective_end},effective_end)
                 completed.append(dataset)
                 with Session.begin() as s:put(s,'ingest',sid,{'start':effective_start,'end':effective_end,'rows':row_count,'rejected_dates':rejected,'status':'partial','completed_datasets':completed,'updated_at':now()})
-            except Exception:
+            except Exception as exc:
+                auxiliary_failure=exc
                 errors.append(dataset+' 尚未取得')
                 break
     with Session.begin() as s:
         put(s,'ingest',sid,{'start':effective_start,'end':effective_end,'rows':row_count,'rejected_dates':rejected,'updated_at':now(),'status':'partial' if errors else 'ok','warnings':errors,'completed_datasets':completed,'extras_completed':not errors and (extras or sid=='TAIEX' or same_range and checkpoint.get('extras_completed',False))})
-    if errors:raise RuntimeError('輔助資料尚未齊全；保留進度，稍後續跑')
+    if errors:raise RuntimeError('輔助資料尚未齊全；保留進度，稍後續跑') from auxiliary_failure
     return {'stock_id':sid,'rows':row_count,'warnings':errors}
 
 def backfill(ids=None, years=10, extras=True):
