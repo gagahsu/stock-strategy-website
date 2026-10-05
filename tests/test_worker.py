@@ -214,3 +214,29 @@ def test_worker_only_shortens_cooldown_when_quota_has_recovered(tmp_path,monkeyp
     assert sleeps.count(10)==expected_waits
     assert calls==[('1101',False),('1101',False),('1101',True)]
     assert not worker.active()
+
+
+def test_history_only_resumes_latest_market_date_and_skips_only_complete_ranges(tmp_path,monkeypatch):
+    from backend.db import Stock,Bar,get
+    engine=create_engine('sqlite:///'+str(tmp_path/'history-only.db'))
+    Base.metadata.create_all(engine);isolated=sessionmaker(engine)
+    with isolated.begin() as s:
+        for sid in ('1101','2330','2454'):s.add(Stock(id=sid,name=sid,market='twse'))
+        s.add(Stock(id='TAIEX',name='Index',market='index'))
+        s.add(Bar(stock_id='TAIEX',date='2026-10-05',open=100,high=101,low=99,close=100,volume=1000))
+        put(s,'ingest','1101',{'start':'2000-01-01','end':'2026-10-02','status':'ok','extras_completed':True})
+        put(s,'ingest','2330',{'start':'2000-01-01','end':'2026-10-05','status':'ok','extras_completed':True})
+        put(s,'ingest','2454',{'start':'2000-01-01','end':'2026-10-05','status':'partial','extras_completed':False})
+    (tmp_path/'data').mkdir()
+    monkeypatch.setattr(worker,'ROOT',tmp_path);monkeypatch.setattr(worker,'Session',isolated)
+    monkeypatch.setattr(worker.time,'sleep',lambda _:None);monkeypatch.setattr(worker,'audit',lambda:None)
+    calls=[];scans=[]
+    monkeypatch.setattr(worker,'history',lambda sid,start,**kwargs:calls.append((sid,start,kwargs)) or {})
+    monkeypatch.setattr('backend.service.scan',lambda:scans.append(len(calls)))
+    worker.run(scan_every=0,history_only=True)
+    assert [x[0] for x in calls]==['TAIEX','1101','2454']
+    assert all(x[2]=={'end':'2026-10-05','extras':True} for x in calls)
+    assert all(x[1]<'2017-01-01' for x in calls)
+    assert scans==[3]
+    with isolated() as s:assert get(s,'bulk','latest')['status']=='done'
+    assert not worker.active()

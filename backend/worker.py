@@ -105,7 +105,7 @@ def phase_complete(s,sid,start,end,extras):
     return covers and ck.get('status') in ('partial','ok') and adjustment.get('end','')>=end
 
 
-def run(years=10,limit=None,scan_every=50):
+def run(years=10,limit=None,scan_every=50,history_only=False):
     if scan_every<0:raise ValueError('scan_every 必須為非負整數')
     lock=ROOT/'data'/'bulk.lock'
     # OS advisory file lock is released after process termination.
@@ -128,7 +128,7 @@ def run(years=10,limit=None,scan_every=50):
         required_end=latest_market_day.date if latest_market_day else date.today().isoformat()
     if limit: ids=ids[:limit]
     recent_start=(date.fromisoformat(required_end)-timedelta(days=370)).isoformat()
-    phases=[('scan',recent_start,False),('history',start,True)]
+    phases=[('history',start,True)] if history_only else [('scan',recent_start,False),('history',start,True)]
     for phase,phase_start,extras in phases:
         done=0
         for sid in ids:
@@ -177,4 +177,5 @@ def run(years=10,limit=None,scan_every=50):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--years',type=int,default=10);p.add_argument('--limit',type=int)
     p.add_argument('--scan-every',type=int,default=50,help='每幾檔重算掃描；0 表示只在階段完成時重算')
-    a=p.parse_args();run(a.years,a.limit,a.scan_every)
+    p.add_argument('--history-only',action='store_true',help='已有全市場原始行情時直接補完整歷史、還原價與輔助資料')
+    a=p.parse_args();run(a.years,a.limit,a.scan_every,a.history_only)
