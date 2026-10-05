@@ -6,6 +6,66 @@ from backend.db import Base, Bar, get
 from backend import ingest
 
 
+def test_daily_extension_retains_ten_year_range_and_older_financials(tmp_path,monkeypatch):
+    from backend.db import put
+    engine=create_engine('sqlite:///'+str(tmp_path/'daily_extension.db'))
+    Base.metadata.create_all(engine); isolated=sessionmaker(engine)
+    monkeypatch.setattr(ingest,'Session',isolated)
+    datasets=['TaiwanStockInstitutionalInvestorsBuySell','TaiwanStockMarginPurchaseShortSale','TaiwanStockMonthRevenue','TaiwanStockFinancialStatements']
+    with isolated.begin() as s:
+        for day in ('2016-10-04','2026-10-02'):
+            s.add(Bar(stock_id='TEST',date=day,open=10,high=11,low=9,close=10,volume=1000))
+        put(s,'ingest','TEST',{'start':'2016-10-04','end':'2026-10-02','rows':2,'status':'ok','extras_completed':True,'completed_datasets':datasets})
+    calls=[]; rebuilt=[]
+    def provider(dataset,sid,start,end):
+        calls.append((dataset,start,end))
+        if dataset=='TaiwanStockPrice':
+            return [{'date':'2026-10-05','open':11,'max':12,'min':10,'close':11,'Trading_Volume':2000}]
+        if dataset=='TaiwanStockFinancialStatements':
+            return [{'date':'2026-06-30','type':'EPS','value':2.1}] if start<='2026-06-30' else []
+        return []
+    monkeypatch.setattr(ingest,'fin',provider)
+    monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:rebuilt.append(args))
+    ingest.history('TEST','2026-09-05','2026-10-05',extras=True)
+    with isolated() as s:
+        checkpoint=get(s,'ingest','TEST')
+        assert (checkpoint['start'],checkpoint['end'],checkpoint['rows'])==('2016-10-04','2026-10-05',3)
+        assert checkpoint['extras_completed']
+        financials=get(s,'financials','TEST','2026-10-05')
+        assert financials['rows'][0]['date']=='2026-06-30'
+        assert (financials['start'],financials['end'])==('2016-10-04','2026-10-05')
+    assert all(start=='2016-10-04' and end=='2026-10-05' for dataset,start,end in calls if dataset!='TaiwanStockPrice')
+    assert rebuilt[-1][2]=='2026-10-05'
+
+
+def test_disjoint_append_fetches_intervening_dates_and_old_request_keeps_latest_baseline(tmp_path,monkeypatch):
+    from backend.db import put
+    engine=create_engine('sqlite:///'+str(tmp_path/'bridged.db'))
+    Base.metadata.create_all(engine); isolated=sessionmaker(engine)
+    monkeypatch.setattr(ingest,'Session',isolated)
+    with isolated.begin() as s:
+        s.add(Bar(stock_id='TEST',date='2026-10-02',open=10,high=11,low=9,close=10,volume=1000))
+        put(s,'ingest','TEST',{'start':'2016-10-04','end':'2026-10-02','rows':1,'status':'ok','extras_completed':True,'completed_datasets':['TaiwanStockMonthRevenue']})
+    calls=[]; rebuilt=[]
+    def provider(dataset,sid,start,end):
+        calls.append((dataset,start,end))
+        assert dataset=='TaiwanStockPrice'
+        return [{'date':day,'open':10,'max':11,'min':9,'close':10,'Trading_Volume':1000} for day in ('2026-10-05','2026-10-21') if start<=day<=end]
+    monkeypatch.setattr(ingest,'fin',provider)
+    monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:rebuilt.append(args))
+    ingest.history('TEST','2026-10-20','2026-10-21',extras=False)
+    assert calls==[('TaiwanStockPrice','2026-10-02','2026-10-21')]
+    with isolated() as s:
+        assert s.get(Bar,('TEST','2026-10-05')) is not None
+        checkpoint=get(s,'ingest','TEST')
+        assert (checkpoint['start'],checkpoint['end'])==('2016-10-04','2026-10-21')
+        assert not checkpoint['extras_completed']
+    ingest.history('TEST','2025-09-01','2026-10-02',extras=False)
+    assert len(calls)==1
+    assert rebuilt[-1][2]=='2026-10-21'
+    with isolated() as s:assert get(s,'ingest','TEST')['end']=='2026-10-21'
+
+
 def test_provider_upsert_handles_concurrent_insert_without_resetting_factors(tmp_path,monkeypatch):
     engine=create_engine('sqlite:///'+str(tmp_path/'concurrent.db'))
     Base.metadata.create_all(engine)
