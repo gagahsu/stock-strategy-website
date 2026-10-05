@@ -28,7 +28,8 @@ def fetch(url, params=None):
             quota=isinstance(exc,httpx.HTTPStatusError) and exc.response.status_code==402
             if attempt == 3 or quota:
                 status=f' HTTP {exc.response.status_code}' if isinstance(exc,httpx.HTTPStatusError) else ''
-                raise RuntimeError(f'資料來源暫時不可用：{url.split("?")[0]} ({type(exc).__name__}{status})') from exc
+                # HTTP errors retain the authenticated URL; omit their traceback chain.
+                raise RuntimeError(f'資料來源暫時不可用：{url.split("?")[0]} ({type(exc).__name__}{status})') from None
             time.sleep(min(2 ** attempt, 8))
 
 def fin(dataset, stock_id=None, start=None, end=None):
