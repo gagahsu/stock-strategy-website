@@ -34,7 +34,8 @@ def phase_complete(s,sid,start,end,extras):
     return covers and ck.get('status') in ('partial','ok') and adjustment.get('end','')>=end
 
 
-def run(years=10,limit=None):
+def run(years=10,limit=None,scan_every=50):
+    if scan_every<0:raise ValueError('scan_every 必須為非負整數')
     lock=ROOT/'data'/'bulk.lock'
     # OS advisory file lock is released after process termination.
     handle=lock.open('a+')
@@ -71,7 +72,7 @@ def run(years=10,limit=None):
                     success=True;done+=1
                     print(json.dumps(result,ensure_ascii=False),flush=True)
                     with Session.begin() as s:put(s,'bulk','latest',{'status':'running','phase':phase,'stock_id':sid,'done':done,'total':len(ids),'updated_at':now()})
-                    if phase=='scan' and done%50==0:
+                    if phase=='scan' and scan_every and done%scan_every==0:
                         from .service import scan
                         scan()
                     time.sleep(2)
@@ -83,9 +84,9 @@ def run(years=10,limit=None):
                             handle.close();return
                         time.sleep(10)
         if (ROOT/'data'/'STOP_BACKFILL').exists():break
-        if phase=='scan':
-            from .service import scan
-            scan()
+        # Refresh at both phase boundaries, including newly downloaded fundamentals.
+        from .service import scan
+        scan()
     audit()
     with Session.begin() as s:put(s,'bulk','latest',{'status':'done' if done==len(ids) else 'stopped','phase':phase,'done':done,'total':len(ids),'updated_at':now()})
     handle.close()
@@ -93,4 +94,5 @@ def run(years=10,limit=None):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--years',type=int,default=10);p.add_argument('--limit',type=int)
-    a=p.parse_args();run(a.years,a.limit)
+    p.add_argument('--scan-every',type=int,default=50,help='每幾檔重算掃描；0 表示只在階段完成時重算')
+    a=p.parse_args();run(a.years,a.limit,a.scan_every)

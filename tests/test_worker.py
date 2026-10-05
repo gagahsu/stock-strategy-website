@@ -1,4 +1,5 @@
 import os
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
@@ -18,7 +19,8 @@ def test_scan_phase_accepts_verified_prices_without_waiting_for_fundamentals(tmp
         assert not worker.phase_complete(s,'TEST','2016-01-01','2026-10-02',True)
 
 
-def test_worker_finishes_whole_market_price_pass_before_deep_history(tmp_path,monkeypatch):
+@pytest.mark.parametrize('scan_every,expected_scans',[(1,4),(0,2)])
+def test_worker_finishes_whole_market_price_pass_before_deep_history(tmp_path,monkeypatch,scan_every,expected_scans):
     from backend.db import Stock
     engine=create_engine('sqlite:///'+str(tmp_path/'ordering.db'))
     Base.metadata.create_all(engine)
@@ -30,13 +32,16 @@ def test_worker_finishes_whole_market_price_pass_before_deep_history(tmp_path,mo
     monkeypatch.setattr(worker,'Session',isolated)
     monkeypatch.setattr(worker.time,'sleep',lambda _:None)
     monkeypatch.setattr(worker,'audit',lambda:None)
-    monkeypatch.setattr('backend.service.scan',lambda:{})
+    scans=[]
+    monkeypatch.setattr('backend.service.scan',lambda:scans.append(len(calls)))
     calls=[]
     monkeypatch.setattr(worker,'history',lambda sid,start,**kwargs:calls.append((sid,start,kwargs['extras'])) or {})
-    worker.run()
+    worker.run(scan_every=scan_every)
     assert [x[0] for x in calls]==['1101','2330','1101','2330']
     assert [x[2] for x in calls]==[False,False,True,True]
     assert calls[0][1]>calls[2][1]
+    assert len(scans)==expected_scans
+    assert scans[-1]==4  # The final refresh includes auxiliary-data completion.
 
 
 def test_worker_activity_uses_live_lock_not_leftover_file(tmp_path, monkeypatch):
