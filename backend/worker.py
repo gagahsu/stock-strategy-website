@@ -2,9 +2,10 @@
 import argparse
 import json
 import os
+import sqlite3
 import time
 import httpx
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, OperationalError
 from datetime import date, timedelta
 from pathlib import Path
 from .db import Session, Stock, Bar, ROOT, put, get, now, settings
@@ -21,6 +22,44 @@ def quota_error(exc):
         if isinstance(exc,httpx.HTTPStatusError) and exc.response.status_code==402:return True
         exc=exc.__cause__ or exc.__context__
     return False
+
+
+def database_locked(exc):
+    """Only retry SQLite busy/locked errors, including wrapped ingestion failures."""
+    seen=set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc,OperationalError):
+            original=exc.orig
+            code=getattr(original,'sqlite_errorcode',None)
+            if isinstance(original,sqlite3.OperationalError):
+                if isinstance(code,int) and (code & 255) in (5,6):return True
+                if str(original).lower() in ('database is locked','database table is locked','database schema is locked'):return True
+        exc=exc.__cause__ or exc.__context__
+    return False
+
+
+def save_status(value):
+    """Status persistence must survive the same writer contention as ingestion."""
+    while True:
+        try:
+            with Session.begin() as s:put(s,'bulk','latest',value)
+            return True
+        except OperationalError as exc:
+            if not database_locked(exc):raise
+            if (ROOT/'data'/'STOP_BACKFILL').exists():return False
+            time.sleep(10)
+
+
+def run_after_database_wait(operation):
+    while True:
+        try:
+            operation()
+            return True
+        except Exception as exc:
+            if not database_locked(exc):raise
+            if (ROOT/'data'/'STOP_BACKFILL').exists():return False
+            time.sleep(10)
 
 
 def available_quota():
@@ -103,17 +142,24 @@ def run(years=10,limit=None,scan_every=50):
                     result=history(sid,phase_start,end=required_end,extras=extras)
                     success=True;done+=1
                     print(json.dumps(result,ensure_ascii=False),flush=True)
-                    with Session.begin() as s:put(s,'bulk','latest',{'status':'running','phase':phase,'stock_id':sid,'done':done,'total':len(ids),'updated_at':now()})
+                    if not save_status({'status':'running','phase':phase,'stock_id':sid,'done':done,'total':len(ids),'updated_at':now()}):
+                        handle.close();return
                     if phase=='scan' and scan_every and done%scan_every==0:
                         from .service import scan
-                        scan()
+                        if not run_after_database_wait(scan):handle.close();return
                     time.sleep(2)
                 except Exception as exc:
-                    with Session.begin() as s:put(s,'bulk','latest',{'status':'cooldown','phase':phase,'stock_id':sid,'done':done,'total':len(ids),'error':str(exc),'updated_at':now(),'retry_seconds':600})
+                    if database_locked(exc):
+                        # The transaction was rolled back; resume the same stock from durable checkpoints.
+                        if (ROOT/'data'/'STOP_BACKFILL').exists():handle.close();return
+                        time.sleep(10)
+                        continue
+                    if not save_status({'status':'cooldown','phase':phase,'stock_id':sid,'done':done,'total':len(ids),'error':str(exc),'updated_at':now(),'retry_seconds':600}):
+                        handle.close();return
                     limited=quota_error(exc)
                     for tick in range(60):
                         if (ROOT/'data'/'STOP_BACKFILL').exists():
-                            with Session.begin() as s:put(s,'bulk','latest',{'status':'stopped','phase':phase,'done':done,'total':len(ids),'updated_at':now()})
+                            save_status({'status':'stopped','phase':phase,'done':done,'total':len(ids),'updated_at':now()})
                             handle.close();return
                         time.sleep(10)
                         if limited and (tick+1)%6==0:
@@ -122,9 +168,9 @@ def run(years=10,limit=None,scan_every=50):
         if (ROOT/'data'/'STOP_BACKFILL').exists():break
         # Refresh at both phase boundaries, including newly downloaded fundamentals.
         from .service import scan
-        scan()
-    audit()
-    with Session.begin() as s:put(s,'bulk','latest',{'status':'done' if done==len(ids) else 'stopped','phase':phase,'done':done,'total':len(ids),'updated_at':now()})
+        if not run_after_database_wait(scan):handle.close();return
+    run_after_database_wait(audit)
+    save_status({'status':'done' if done==len(ids) else 'stopped','phase':phase,'done':done,'total':len(ids),'updated_at':now()})
     handle.close()
 
 

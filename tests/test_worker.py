@@ -1,11 +1,84 @@
 import os
 import pytest
 import httpx
+import sqlite3
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 from backend import api, worker
 from backend.db import Base, put
+
+
+def test_database_lock_detection_preserves_non_lock_failures():
+    locked=OperationalError('update',{},sqlite3.OperationalError('database is locked'))
+    wrapped=RuntimeError('wrapped ingestion error');wrapped.__context__=locked
+    assert worker.database_locked(wrapped)
+    assert not worker.database_locked(OperationalError('update',{},sqlite3.OperationalError('disk is full')))
+    assert not worker.database_locked(ValueError('database is locked'))
+    wrapped.__context__=wrapped
+    assert not worker.database_locked(wrapped)
+
+
+def test_status_write_survives_real_concurrent_sqlite_writer(tmp_path,monkeypatch):
+    from backend.db import get
+    path=tmp_path/'status-contention.db'
+    engine=create_engine('sqlite:///'+str(path),connect_args={'timeout':0.01})
+    Base.metadata.create_all(engine);isolated=sessionmaker(engine)
+    (tmp_path/'data').mkdir()
+    monkeypatch.setattr(worker,'ROOT',tmp_path);monkeypatch.setattr(worker,'Session',isolated)
+    writer=sqlite3.connect(path)
+    writer.execute('BEGIN IMMEDIATE')
+    waits=[]
+    def release(seconds):
+        waits.append(seconds);writer.rollback();writer.close()
+    monkeypatch.setattr(worker.time,'sleep',release)
+    assert worker.save_status({'status':'running','done':1501})
+    assert waits==[10]
+    with isolated() as s:assert get(s,'bulk','latest')['done']==1501
+
+
+def test_locked_status_write_honors_stop_without_crashing(tmp_path,monkeypatch):
+    path=tmp_path/'status-stop.db'
+    engine=create_engine('sqlite:///'+str(path),connect_args={'timeout':0.01})
+    Base.metadata.create_all(engine);isolated=sessionmaker(engine)
+    (tmp_path/'data').mkdir();(tmp_path/'data'/'STOP_BACKFILL').touch()
+    monkeypatch.setattr(worker,'ROOT',tmp_path);monkeypatch.setattr(worker,'Session',isolated)
+    writer=sqlite3.connect(path);writer.execute('BEGIN IMMEDIATE')
+    try:assert worker.save_status({'status':'stopped'}) is False
+    finally:writer.rollback();writer.close()
+
+
+def test_worker_retries_same_stock_after_database_lock(tmp_path,monkeypatch):
+    from backend.db import Stock,get
+    engine=create_engine('sqlite:///'+str(tmp_path/'ingestion-lock.db'))
+    Base.metadata.create_all(engine);isolated=sessionmaker(engine)
+    with isolated.begin() as s:s.add(Stock(id='1101',name='test',market='twse'))
+    (tmp_path/'data').mkdir()
+    monkeypatch.setattr(worker,'ROOT',tmp_path);monkeypatch.setattr(worker,'Session',isolated)
+    monkeypatch.setattr(worker,'audit',lambda:None);monkeypatch.setattr('backend.service.scan',lambda:{})
+    calls=[];waits=[];monkeypatch.setattr(worker.time,'sleep',waits.append)
+    def ingest(sid,start,**kwargs):
+        calls.append((sid,kwargs['extras']))
+        if len(calls)==1:raise OperationalError('update',{},sqlite3.OperationalError('database is locked'))
+        return {}
+    monkeypatch.setattr(worker,'history',ingest)
+    worker.run(scan_every=0)
+    assert calls==[('1101',False),('1101',False),('1101',True)]
+    assert waits.count(10)==1
+    with isolated() as s:assert get(s,'bulk','latest')['status']=='done'
+    assert not worker.active()
+
+
+def test_phase_refresh_waits_for_lock_and_propagates_other_failures(tmp_path,monkeypatch):
+    (tmp_path/'data').mkdir();monkeypatch.setattr(worker,'ROOT',tmp_path)
+    waits=[];calls=[];monkeypatch.setattr(worker.time,'sleep',waits.append)
+    def refresh():
+        calls.append(True)
+        if len(calls)==1:raise OperationalError('update',{},sqlite3.OperationalError('database is locked'))
+    assert worker.run_after_database_wait(refresh)
+    assert len(calls)==2 and waits==[10]
+    with pytest.raises(ValueError):worker.run_after_database_wait(lambda:(_ for _ in ()).throw(ValueError('invalid data')))
 
 
 def test_scan_phase_accepts_verified_prices_without_waiting_for_fundamentals(tmp_path):
