@@ -8,6 +8,7 @@ import math
 from io import StringIO
 from datetime import date, timedelta
 import httpx
+from sqlalchemy import or_
 from .db import Session, Stock, Bar, Record, put, get, now
 
 FIN = 'https://api.finmindtrade.com/api/v4/data'
@@ -205,7 +206,17 @@ def history(sid, start, end=None, extras=True):
         with Session() as s:
             first=s.query(Bar).filter_by(stock_id=sid).order_by(Bar.date).first()
             adjustment_start=first.date if first else start
-        rebuild(sid,adjustment_start,effective_end)
+            previous=get(s,'adjustment_audit',sid,default={})
+            actions=get(s,'corporate_actions',sid,previous.get('end',''),default={})
+            bad=s.query(Bar.date).filter(Bar.stock_id==sid,Bar.date<=effective_end,or_(
+                Bar.adjustment_verified!=1,Bar.adjustment_verified.is_(None),
+                Bar.factor.is_(None),Bar.factor<=0,Bar.factor>=float('inf'))).first()
+            reusable=bool(first and first.date<=effective_end and
+                previous.get('method')=='free_reference_price' and
+                previous.get('start','9999')<=adjustment_start and previous.get('end','')>=effective_end and
+                actions.get('method')=='reference_price_backward_factor' and
+                isinstance(actions.get('rows'),list) and isinstance(actions.get('reductions'),list) and not bad)
+        if not reusable:rebuild(sid,adjustment_start,effective_end)
     except Exception:
         errors.append('還原價尚未取得；回測將拒絕未驗證的區間')
         # Preserve raw-loaded checkpoint and stop request fan-out after quota failure.

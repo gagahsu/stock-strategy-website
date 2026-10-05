@@ -6,6 +6,38 @@ from backend.db import Base, Bar, get
 from backend import ingest
 
 
+@pytest.mark.parametrize('condition,reuse',[
+    ('verified',True),('unverified',False),('new_older_price',False),('invalid_factor',False),
+    ('missing_source',False),('short_start',False),('short_end',False),('infinite_factor',False)])
+def test_deep_history_reuses_only_complete_valid_adjustment_evidence(tmp_path,monkeypatch,condition,reuse):
+    from backend.db import put
+    engine=create_engine('sqlite:///'+str(tmp_path/'action_cache.db'))
+    Base.metadata.create_all(engine);isolated=sessionmaker(engine)
+    monkeypatch.setattr(ingest,'Session',isolated)
+    first='2017-01-03' if condition=='new_older_price' else '2016-10-04'
+    with isolated.begin() as s:
+        for day in (first,'2026-10-02'):
+            s.add(Bar(stock_id='TEST',date=day,open=10,high=11,low=9,close=10,volume=1000,
+                adjustment_verified=0 if condition=='unverified' else 1,
+                factor=0 if condition=='invalid_factor' else float('inf') if condition=='infinite_factor' else 1))
+        put(s,'ingest','TEST',{'start':'2025-09-27','end':'2026-10-02','status':'ok'})
+        audit_start='2017-01-03' if condition=='short_start' else first
+        audit_end='2026-09-30' if condition=='short_end' else '2026-10-02'
+        put(s,'adjustment_audit','TEST',{'start':audit_start,'end':audit_end,'method':'free_reference_price'})
+        if condition!='missing_source':
+            put(s,'corporate_actions','TEST',{'rows':[],'reductions':[],'method':'reference_price_backward_factor'},audit_end)
+    calls=[];rebuilt=[]
+    def provider(dataset,sid,start,end):
+        calls.append(dataset)
+        assert dataset=='TaiwanStockPrice'
+        return [{'date':day,'open':10,'max':11,'min':9,'close':10,'Trading_Volume':1000} for day in ('2016-10-04','2026-10-02')]
+    monkeypatch.setattr(ingest,'fin',provider)
+    monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:rebuilt.append(args))
+    ingest.history('TEST','2016-10-04','2026-10-02',extras=False)
+    assert calls==['TaiwanStockPrice']
+    assert bool(rebuilt) is not reuse
+
+
 def test_daily_extension_retains_ten_year_range_and_older_financials(tmp_path,monkeypatch):
     from backend.db import put
     engine=create_engine('sqlite:///'+str(tmp_path/'daily_extension.db'))
