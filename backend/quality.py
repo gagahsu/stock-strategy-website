@@ -2,7 +2,9 @@ from .db import Session, Bar, Stock, get, put, now
 
 def audit():
     report=[]
-    with Session.begin() as s:
+    # Compute the whole-market report without taking SQLite's writer lock.
+    # Backfills can keep committing bars while this expensive read runs.
+    with Session() as s:
         calendar={x.date for x in s.query(Bar).filter_by(stock_id='TAIEX')}
         ids=[x[0] for x in s.query(Bar.stock_id).group_by(Bar.stock_id)]
         for sid in ids:
@@ -18,7 +20,9 @@ def audit():
             value={'id':sid,'rows':len(rows),'first':rows[0].date,'last':rows[-1].date,'missing_trading_dates':missing,'unverified_bars':sum(not x.adjustment_verified for x in rows),'suspicious_moves':suspicious,'warning':'缺交易日可能為停牌或來源缺漏，須核對公告。' if missing or suspicious else None}
             value['rejected_dates']=get(s,'ingest',sid,default={}).get('rejected_dates',[])
             if value['rejected_dates']:value['warning']='來源含不合法或非成交行情，已隔離且未填補K線；缺漏須核對。'
-            put(s,'quality',sid,value)
             report.append(value)
+    with Session.begin() as s:
+        for value in report:
+            put(s,'quality',value['id'],value)
         put(s,'quality_summary','latest',{'updated_at':now(),'rows':report})
     return report
