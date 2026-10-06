@@ -10,6 +10,20 @@ from backend import api, worker
 from backend.db import Base, put
 
 
+def test_complete_checkpoint_requires_actual_price_in_requested_window(tmp_path):
+    from backend.db import Bar
+    engine=create_engine('sqlite:///'+str(tmp_path/'empty-checkpoint.db'))
+    Base.metadata.create_all(engine); isolated=sessionmaker(engine)
+    with isolated.begin() as s:
+        put(s,'ingest','TEST',{'start':'2024-01-01','end':'2024-01-31','status':'ok','extras_completed':True,'rows':99})
+        put(s,'adjustment_audit','TEST',{'end':'2024-01-31'})
+        for extras in (False,True):assert not worker.phase_complete(s,'TEST','2024-01-01','2024-01-31',extras)
+        s.add(Bar(stock_id='TEST',date='2024-02-01',open=10,high=11,low=9,close=10,volume=1000));s.flush()
+        assert not worker.phase_complete(s,'TEST','2024-01-01','2024-01-31',True)
+        s.add(Bar(stock_id='TEST',date='2024-01-02',open=10,high=11,low=9,close=10,volume=1000));s.flush()
+        assert worker.phase_complete(s,'TEST','2024-01-01','2024-01-31',True)
+
+
 def test_database_lock_detection_preserves_non_lock_failures():
     locked=OperationalError('update',{},sqlite3.OperationalError('database is locked'))
     wrapped=RuntimeError('wrapped ingestion error');wrapped.__context__=locked
@@ -89,6 +103,9 @@ def test_scan_phase_accepts_verified_prices_without_waiting_for_fundamentals(tmp
         put(s,'ingest','TEST',{'start':'2025-01-01','end':'2026-10-02','status':'partial','extras_completed':False})
         assert not worker.phase_complete(s,'TEST','2025-10-01','2026-10-02',False)
         put(s,'adjustment_audit','TEST',{'end':'2026-10-02'})
+        from backend.db import Bar
+        s.add(Bar(stock_id='TEST',date='2026-10-02',open=10,high=11,low=9,close=10,volume=1000))
+        s.flush()
         assert worker.phase_complete(s,'TEST','2025-10-01','2026-10-02',False)
         assert not worker.phase_complete(s,'TEST','2016-01-01','2026-10-02',True)
 
@@ -224,6 +241,7 @@ def test_history_only_resumes_latest_market_date_and_skips_only_complete_ranges(
         for sid in ('1101','2330','2454'):s.add(Stock(id=sid,name=sid,market='twse'))
         s.add(Stock(id='TAIEX',name='Index',market='index'))
         s.add(Bar(stock_id='TAIEX',date='2026-10-05',open=100,high=101,low=99,close=100,volume=1000))
+        s.add(Bar(stock_id='2330',date='2026-10-05',open=100,high=101,low=99,close=100,volume=1000))
         put(s,'ingest','1101',{'start':'2000-01-01','end':'2026-10-02','status':'ok','extras_completed':True})
         put(s,'ingest','2330',{'start':'2000-01-01','end':'2026-10-05','status':'ok','extras_completed':True})
         put(s,'ingest','2454',{'start':'2000-01-01','end':'2026-10-05','status':'partial','extras_completed':False})

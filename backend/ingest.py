@@ -181,6 +181,9 @@ def history(sid, start, end=None, extras=True):
     resumed=prior and checkpoint['start']<=start and checkpoint['end']>=end
     effective_start=min(start,checkpoint['start']) if prior else start
     effective_end=max(end,checkpoint['end']) if prior else end
+    if resumed:
+        with Session() as s:
+            resumed=bool(s.query(Bar.date).filter(Bar.stock_id==sid,Bar.date>=effective_start,Bar.date<=effective_end).first())
     same_range=prior and effective_start==checkpoint['start'] and effective_end==checkpoint['end']
     completed=list(checkpoint.get('completed_datasets',[])) if same_range else []
     # Bridge any gap when a later daily update extends an existing history interval.
@@ -197,8 +200,10 @@ def history(sid, start, end=None, extras=True):
                 rejected.append(x.get('date','unknown'))
                 put(s,'rejected_bar',sid,{'row':x,'reason':str(exc),'updated_at':now()},x.get('date','unknown'))
         rejected=sorted(set(rejected))
-        row_count=checkpoint.get('rows',0) if resumed else s.query(Bar).filter(Bar.stock_id==sid,Bar.date>=effective_start,Bar.date<=effective_end).count()
-        put(s,'ingest',sid,{'start':effective_start,'end':effective_end,'rows':row_count,'rejected_dates':rejected,'updated_at':now(),'status':'partial','completed_datasets':completed})
+        row_count=s.query(Bar).filter(Bar.stock_id==sid,Bar.date>=effective_start,Bar.date<=effective_end).count()
+        put(s,'ingest',sid,{'start':effective_start,'end':effective_end,'rows':row_count,'rejected_dates':rejected,'updated_at':now(),'status':'partial','completed_datasets':completed,'warnings':[] if row_count else ['尚未取得有效日K']})
+    if not row_count:
+        raise RuntimeError('尚未取得有效日K；保留待補狀態，稍後重新取價')
     errors=[]
     auxiliary_failure=None
     # Free ex-dividend and capital-reduction reference prices, paid feed optional.

@@ -101,6 +101,7 @@ def active():
 def phase_complete(s,sid,start,end,extras):
     ck=get(s,'ingest',sid,default={})
     covers=ck.get('start','9999')<=start and ck.get('end','')>=end
+    if not covers or not s.query(Bar.date).filter(Bar.stock_id==sid,Bar.date>=start,Bar.date<=end).first():return False
     if extras:return covers and ck.get('status')=='ok' and ck.get('extras_completed',False)
     adjustment=get(s,'adjustment_audit',sid,default={})
     return covers and ck.get('status') in ('partial','ok') and adjustment.get('end','')>=end

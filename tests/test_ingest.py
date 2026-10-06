@@ -6,6 +6,36 @@ from backend.db import Base, Bar, get
 from backend import ingest
 
 
+@pytest.mark.parametrize('invalid_only',[False,True])
+def test_empty_history_stays_pending_and_retries_price_before_auxiliary(tmp_path,monkeypatch,invalid_only):
+    from backend.db import put
+    engine=create_engine('sqlite:///'+str(tmp_path/'empty-history.db'))
+    Base.metadata.create_all(engine); isolated=sessionmaker(engine)
+    monkeypatch.setattr(ingest,'Session',isolated)
+    with isolated.begin() as s:
+        put(s,'ingest','TEST',{'start':'2024-01-01','end':'2024-01-03','rows':99,'status':'ok','extras_completed':True})
+    calls=[]; available=[False]
+    def provider(dataset,*args):
+        calls.append(dataset)
+        if dataset!='TaiwanStockPrice':return []
+        if available[0]:return [{'date':'2024-01-02','open':10,'max':11,'min':9,'close':10,'Trading_Volume':1000}]
+        return [{'date':'2024-01-02','open':10,'max':8,'min':9,'close':10,'Trading_Volume':1000}] if invalid_only else []
+    monkeypatch.setattr(ingest,'fin',provider)
+    monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:None)
+    for _ in range(2):
+        with pytest.raises(RuntimeError,match='有效日K'):ingest.history('TEST','2024-01-01','2024-01-03')
+    assert calls==['TaiwanStockPrice','TaiwanStockPrice']
+    with isolated() as s:
+        ck=get(s,'ingest','TEST')
+        assert ck['status']=='partial' and ck['rows']==0 and not ck.get('extras_completed')
+        if invalid_only:assert get(s,'rejected_bar','TEST','2024-01-02')
+    available[0]=True
+    ingest.history('TEST','2024-01-01','2024-01-03')
+    with isolated() as s:
+        assert get(s,'ingest','TEST')['rows']==1
+        assert get(s,'ingest','TEST')['extras_completed']
+
+
 @pytest.mark.parametrize('condition,reuse',[
     ('verified',True),('unverified',False),('new_older_price',False),('invalid_factor',False),
     ('missing_source',False),('short_start',False),('short_end',False),('infinite_factor',False)])
@@ -126,11 +156,13 @@ def test_recent_pass_preserves_completed_ten_year_checkpoint(tmp_path,monkeypatc
     def forbidden(*args):raise AssertionError('completed price dataset must not be downloaded again')
     monkeypatch.setattr(ingest,'fin',forbidden)
     monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:None)
-    with isolated.begin() as s:put(s,'ingest','TEST',{'start':'2016-01-01','end':'2026-10-02','rows':2400,'status':'ok','extras_completed':True,'completed_datasets':['TaiwanStockMonthRevenue']})
+    with isolated.begin() as s:
+        s.add(Bar(stock_id='TEST',date='2026-10-02',open=10,high=11,low=9,close=10,volume=1000))
+        put(s,'ingest','TEST',{'start':'2016-01-01','end':'2026-10-02','rows':2400,'status':'ok','extras_completed':True,'completed_datasets':['TaiwanStockMonthRevenue']})
     ingest.history('TEST','2025-10-01','2026-10-02',extras=False)
     with isolated() as s:
         ck=get(s,'ingest','TEST')
-        assert ck['start']=='2016-01-01' and ck['rows']==2400
+        assert ck['start']=='2016-01-01' and ck['rows']==1
         assert ck['extras_completed'] is True
         assert ck['completed_datasets']==['TaiwanStockMonthRevenue']
 
@@ -166,7 +198,7 @@ def test_price_only_backfill_does_not_claim_auxiliary_completion(tmp_path,monkey
     Base.metadata.create_all(engine)
     isolated=sessionmaker(engine)
     monkeypatch.setattr(ingest,'Session',isolated)
-    monkeypatch.setattr(ingest,'fin',lambda *args:[])
+    monkeypatch.setattr(ingest,'fin',lambda *args:[{'date':'2024-01-02','open':10,'max':11,'min':9,'close':10,'Trading_Volume':1000}])
     monkeypatch.setattr('backend.adjustments.rebuild',lambda *args:None)
     ingest.history('TEST','2024-01-01','2024-01-03',extras=False)
     with isolated() as s:assert get(s,'ingest','TEST')['extras_completed'] is False
@@ -218,7 +250,8 @@ def test_auxiliary_quota_remains_detectable_and_retry_keeps_completed_datasets(t
         params=kwargs['params'];dataset=params['dataset'];calls.append(dataset)
         if dataset=='TaiwanStockMonthRevenue' and limited[0]:
             return httpx.Response(402,request=httpx.Request('GET',url,params=params),json={'status':402})
-        return httpx.Response(200,request=httpx.Request('GET',url,params=params),json={'data':[]})
+        data=[{'date':'2026-10-05','open':10,'max':11,'min':9,'close':10,'Trading_Volume':1000}] if dataset=='TaiwanStockPrice' else []
+        return httpx.Response(200,request=httpx.Request('GET',url,params=params),json={'data':data})
     monkeypatch.setattr(ingest.httpx,'get',provider)
     with pytest.raises(RuntimeError,match='輔助資料') as error:
         ingest.history('TEST','2016-10-04','2026-10-05')
