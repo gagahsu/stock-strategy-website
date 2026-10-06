@@ -12,6 +12,7 @@ from .db import Session, Stock, Bar, ROOT, put, get, now, settings
 from .universe import pool_stocks
 from .ingest import history
 from .quality import audit
+from .backfill_scope import pin_scope
 
 
 def quota_error(exc):
@@ -120,7 +121,11 @@ def run(years=10,limit=None,scan_every=50,history_only=False):
             fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
     except (OSError,BlockingIOError):
         handle.close();raise RuntimeError('已有批次回補執行中')
-    start=(date.today()-timedelta(days=365*years+3)).isoformat()
+    captured_scope=[]
+    def capture_scope():
+        with Session.begin() as s:captured_scope[:]=[pin_scope(s,years)]
+    if not run_after_database_wait(capture_scope):handle.close();return
+    start=captured_scope[0]
     with Session() as s:
         stocks=pool_stocks(s,settings(s),include_index=True)
         ids=[x.id for x in sorted(stocks,key=lambda x:(0 if x.id=='TAIEX' else 2 if x.id.startswith('00') else 1,x.id))]

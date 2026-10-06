@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from .db import Session, Bar, ROOT, get, put, now, settings
 from .ingest import fetch, iso, bar_values
 from .universe import pool_stocks
+from .backfill_scope import pin_scope
 
 SOURCES = {
     'twse': 'https://www.twse.com.tw/exchangeReport/MI_INDEX',
@@ -126,7 +127,8 @@ def run(years=10, recent_days=370):
             raise ValueError('缺少大盤交易日期或股票池，無法回補')
         fingerprint = hashlib.sha256('\n'.join(sorted(known)).encode()).hexdigest()
         end = date.fromisoformat(calendar[0])
-        start = (date.today() - timedelta(days=365 * years + 3)).isoformat()
+        with Session.begin() as s:
+            start = pin_scope(s, years)
         recent_start = (end - timedelta(days=recent_days)).isoformat()
         days = [d for d in calendar if d >= start]
         phases = [('recent', [d for d in days if d >= recent_start]),
