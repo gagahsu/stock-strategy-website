@@ -115,11 +115,14 @@ def company_profiles():
             rows=fetch(url);count=0
             with Session.begin() as s:
                 for row in rows:
-                    st=s.get(Stock,str(row.get('公司代號','')))
+                    # TPEx exposes Chinese CSV headings and English JSON keys.
+                    sid=row.get('公司代號',row.get('SecuritiesCompanyCode'))
+                    st=s.get(Stock,str(sid or ''))
                     if not st:continue
-                    capital=num(row.get('實收資本額'))
+                    capital=num(row.get('實收資本額',row.get('Paidin.Capital.NTDollars')))
+                    capital_date=iso(row.get('出表日期',row.get('Date')))
                     payload=json.loads(st.payload)
-                    payload.update({'paid_in_capital':capital,'capital_date':iso(row['出表日期']),'company_profile':row})
+                    payload.update({'paid_in_capital':capital,'capital_date':capital_date,'company_profile':row})
                     st.payload=json.dumps(payload,ensure_ascii=False);count+=1
                 put(s,'ingest','profiles_'+market,{'rows':count,'updated_at':now()})
             report[market]=count
